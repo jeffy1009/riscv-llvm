@@ -293,6 +293,7 @@ RISCVTargetLowering::RISCVTargetLowering(const TargetMachine &tm,
   setOperationAction(ISD::ConstantPool,     PtrVT, Custom);
   setOperationAction(ISD::GlobalAddress,    PtrVT, Custom);
   setOperationAction(ISD::GlobalTLSAddress, PtrVT, Custom);
+  setOperationAction(ISD::ExternalSymbol,   PtrVT, Custom);
   setOperationAction(ISD::BlockAddress,     PtrVT, Custom);
   setOperationAction(ISD::JumpTable,        PtrVT, Custom);
 
@@ -1036,7 +1037,7 @@ RISCVTargetLowering::LowerCall(CallLoweringInfo &CLI,
     if (DAG.getTarget().getRelocationModel() == Reloc::PIC_) {
       Callee = getAddrPIC(DAG.getTargetExternalSymbol(E->getSymbol(), PtrVT), DAG);
     } else
-      Callee = DAG.getTargetExternalSymbol(E->getSymbol(), PtrVT);
+      Callee = DAG.getExternalSymbol(E->getSymbol(), PtrVT);
   }
 
   // The first call operand is the chain and the second is the target address.
@@ -1245,6 +1246,18 @@ SDValue RISCVTargetLowering::lowerGlobalTLSAddress(GlobalAddressSDNode *GA,
 
 }
 
+SDValue RISCVTargetLowering::lowerExternalSymbol(SDValue Op,
+                                                  SelectionDAG &DAG) const {
+  Reloc::Model RM = DAG.getTarget().getRelocationModel();
+
+  if(RM != Reloc::PIC_) {
+      //%hi/%lo relocation
+      return getAddrNonPIC(Op,DAG);
+  }
+
+  llvm_unreachable("invalid global addresses to lower");
+}
+
 SDValue RISCVTargetLowering::lowerBlockAddress(BlockAddressSDNode *Node,
                                                  SelectionDAG &DAG) const {
   const BlockAddress *BA = Node->getBlockAddress();
@@ -1403,6 +1416,8 @@ SDValue RISCVTargetLowering::LowerOperation(SDValue Op,
     return lowerGlobalAddress(Op, DAG);
   case ISD::GlobalTLSAddress:
     return lowerGlobalTLSAddress(cast<GlobalAddressSDNode>(Op), DAG);
+  case ISD::ExternalSymbol:
+    return lowerExternalSymbol(Op, DAG);
   case ISD::BlockAddress:
     return lowerBlockAddress(cast<BlockAddressSDNode>(Op), DAG);
   case ISD::JumpTable:

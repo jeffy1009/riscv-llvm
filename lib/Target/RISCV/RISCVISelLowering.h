@@ -188,6 +188,8 @@ private:
                              SelectionDAG &DAG) const;
   SDValue lowerGlobalTLSAddress(GlobalAddressSDNode *Node,
                                 SelectionDAG &DAG) const;
+  SDValue lowerExternalSymbol(SDValue Op,
+                             SelectionDAG &DAG) const;
   SDValue lowerBlockAddress(BlockAddressSDNode *Node,
                             SelectionDAG &DAG) const;
   SDValue lowerJumpTable(JumpTableSDNode *JT, SelectionDAG &DAG) const;
