@@ -63,9 +63,23 @@ RISCVFrameLowering::RISCVFrameLowering()
 // pointer register.  This is true if the function has variable sized allocas or
 // if frame pointer elimination is disabled.
 bool RISCVFrameLowering::hasFP(const MachineFunction &MF) const {
-  const MachineFrameInfo *MFI = MF.getFrameInfo();
-  return MF.getTarget().Options.DisableFramePointerElim(MF) ||
-      MFI->hasVarSizedObjects() || MFI->isFrameAddressTaken();
+  // FIXME
+  // s0 - fp alias caused some bugs when compiler tries to use fp register for
+  // other purpose than frame pointer (e.g. when -fomit-frame-pointer is
+  // applied). The reason is that s0 is not in GR32 in RISCVRegisterInfo.td, so
+  // the compiler couldn't find the register class for s0. But adding it to
+  // GR32 might cause other problems: GR32 is used for the allocation order
+  // during regalloc and thus fp and s0 will both be in the alloc order, which can
+  // be a problem. Also, during prolog-epilog insertion, if fp is used in the
+  // function, both fp and s0 will be in the SavedRegs computed by
+  // TFI->determineCalleeSaves(), and then compiler might allocate stack slots for
+  // both fp and s0. The same applies to s0_64 & fp_64.
+  // Until this problem is solved, we just force compiler to use fp as the frame
+  // pointer only.
+  return true;
+  // const MachineFrameInfo *MFI = MF.getFrameInfo();
+  // return MF.getTarget().Options.DisableFramePointerElim(MF) ||
+  //     MFI->hasVarSizedObjects() || MFI->isFrameAddressTaken();
 }
 
 
