@@ -1651,10 +1651,10 @@ emitRISCV_ZEXT(MachineInstr *MI, MachineBasicBlock *BB) const {
     }
 
     BuildMI(*BB, NextMI, MI->getDebugLoc(), TII->get(RISCV::SLLI64), VReg1)
-      .addReg(MI->getOperand(0).getReg()).addImm(32);
+      .addReg(MI->getOperand(0).getReg(), RegState::Kill).addImm(32);
 
     BuildMI(*BB, NextMI, MI->getDebugLoc(), TII->get(RISCV::SRLI64), VReg2)
-      .addReg(VReg1).addImm(32);
+      .addReg(VReg1, RegState::Kill).addImm(32);
   }
 
   return BB;
