@@ -1578,18 +1578,105 @@ emitSelectCC(MachineInstr *MI, MachineBasicBlock *BB) const {
 }
 
 MachineBasicBlock *RISCVTargetLowering::
+emitRISCV_EXTRACT_SUBREG(MachineInstr *MI, MachineBasicBlock *BB) const {
+  // For instructions without "W" at the end, we need sign extension,
+  // If we find at least one user of this instruction which doesn't have "W"
+  // at the end, we leave the instruction to be handled at the post-RA pseudo
+  // instruction expansion stage. Otherwise, we convert it to COPY so that
+  // it can benefit from following optimization passes.
+  // TODO: Can we search more deeply into the DU chain so that we could find
+  // more chance to not use explicit sign extension?
+  MachineRegisterInfo &MRI = MI->getParent()->getParent()->getRegInfo();
+  unsigned DstReg = MI->getOperand(0).getReg();
+  for (MachineRegisterInfo::use_instr_nodbg_iterator
+         UI = MRI.use_instr_nodbg_begin(DstReg), E = MRI.use_instr_nodbg_end();
+       UI != E; ++UI) {
+    switch (UI->getOpcode()) {
+    case RISCV::ADDIW:
+    case RISCV::SLLIW:
+    case RISCV::SRLIW:
+    case RISCV::SRAIW:
+    case RISCV::ADDW:
+    case RISCV::SUBW:
+    case RISCV::SLLW:
+    case RISCV::SRLW:
+    case RISCV::SRAW:
+      break;
+    default:
+      return BB;
+    }
+  }
+
+  const TargetInstrInfo *TII = Subtarget.getInstrInfo();
+  MI->setDesc(TII->get(TargetOpcode::COPY));
+  MI->getOperand(1).setSubReg(MI->getOperand(2).getImm());
+  MI->RemoveOperand(2);
+  return BB;
+}
+
+MachineBasicBlock *RISCVTargetLowering::
+emitRISCV_ZEXT(MachineInstr *MI, MachineBasicBlock *BB) const {
+  // We need explicit zero-extend for MUL. If we only used SUBREG_TO_REG,
+  // it could be optimized away.
+  // TODO: if MUL is not a direct user of this instruction, this will fail to
+  // produce correct code.
+  MachineRegisterInfo &MRI = MI->getParent()->getParent()->getRegInfo();
+  unsigned DstReg = MI->getOperand(0).getReg();
+  bool HasMUL = false;
+  for (MachineRegisterInfo::use_instr_nodbg_iterator
+         UI = MRI.use_instr_nodbg_begin(DstReg), E = MRI.use_instr_nodbg_end();
+       UI != E; ++UI) {
+    if (UI->getOpcode() == RISCV::MUL64) {
+      HasMUL = true;
+      break;
+    }
+  }
+
+  const TargetInstrInfo *TII = Subtarget.getInstrInfo();
+
+  MI->setDesc(TII->get(TargetOpcode::SUBREG_TO_REG));
+
+  if (HasMUL) {
+    MachineBasicBlock::iterator NextMI = std::next(MachineBasicBlock::iterator(MI));
+    MachineFunction *F = BB->getParent();
+
+    unsigned VReg1 = F->getRegInfo().createVirtualRegister(&RISCV::GR64BitRegClass);
+    unsigned VReg2 = F->getRegInfo().createVirtualRegister(&RISCV::GR64BitRegClass);
+
+    for (MachineRegisterInfo::use_instr_iterator
+           UI = MRI.use_instr_begin(DstReg), E = MRI.use_instr_end();
+         UI != E; ++UI) {
+      const TargetRegisterInfo *TRI = Subtarget.getRegisterInfo();
+      UI->substituteRegister(DstReg, VReg2, 0, *TRI);
+    }
+
+    BuildMI(*BB, NextMI, MI->getDebugLoc(), TII->get(RISCV::SLLI64), VReg1)
+      .addReg(MI->getOperand(0).getReg()).addImm(32);
+
+    BuildMI(*BB, NextMI, MI->getDebugLoc(), TII->get(RISCV::SRLI64), VReg2)
+      .addReg(VReg1).addImm(32);
+  }
+
+  return BB;
+}
+
+MachineBasicBlock *RISCVTargetLowering::
 EmitInstrWithCustomInserter(MachineInstr *MI, MachineBasicBlock *MBB) const {
   switch (MI->getOpcode()) {
   case RISCV::SELECT_CC:
   case RISCV::SELECT_CC64:
   case RISCV::FSELECT_CC_F:
   case RISCV::FSELECT_CC_D:
-      return emitSelectCC(MI, MBB);
+    return emitSelectCC(MI, MBB);
   case RISCV::CALL:
   case RISCV::CALLREG:
   case RISCV::CALL64:
   case RISCV::CALLREG64:
-      return emitCALL(MI, MBB);
+    return emitCALL(MI, MBB);
+  case RISCV::RISCV_EXTRACT_SUBREG:
+    return emitRISCV_EXTRACT_SUBREG(MI, MBB);
+  case RISCV::RISCV_ZEXT:
+    return emitRISCV_ZEXT(MI, MBB);
   default:
     llvm_unreachable("Unexpected instr type to insert");
   }

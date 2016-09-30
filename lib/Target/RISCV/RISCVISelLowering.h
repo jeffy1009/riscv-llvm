@@ -216,6 +216,10 @@ private:
                                 MachineBasicBlock *BB) const;
   MachineBasicBlock *emitSelectCC(MachineInstr *MI,
                                 MachineBasicBlock *BB) const;
+  MachineBasicBlock *emitRISCV_EXTRACT_SUBREG(MachineInstr *MI,
+                                              MachineBasicBlock *BB) const;
+  MachineBasicBlock *emitRISCV_ZEXT(MachineInstr *MI,
+                                    MachineBasicBlock *BB) const;
 
 };
 

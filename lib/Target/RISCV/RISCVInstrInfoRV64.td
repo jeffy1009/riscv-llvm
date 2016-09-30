@@ -283,13 +283,27 @@ def LA64 : InstRISCV<4, (outs GR64:$dst), (ins imm64:$label), "la\t$dst, $label"
   []>, Requires<[IsRV64]>{
     let isPseudo = 1;
 }
+
+// Special pseudo instruction to insert explicit sign & zero extension at the
+// right place. If we used EXTRACT_SUBREG and SUBREG_TO_REG, it will be optimized
+// away. RISCV64 need explicit sign extension for instructions without "W" at the
+// end, and zero extension for MUL instruction.
+let usesCustomInserter = 1 in {
+  def RISCV_EXTRACT_SUBREG : Pseudo<(outs GR32:$dst),
+                                    (ins GR64:$src, i32imm:$subidx),
+                                    []>, Requires<[IsRV64]>;
+  def RISCV_ZEXT : Pseudo<(outs GR64:$dst),
+                          (ins unknown:$implsrc, GR32:$subsrc, i32imm:$subidx),
+                          []>, Requires<[IsRV64]>;
+}
+
 //simple immediate loading
 //simple zext i32 to i64
-def : Pat<(i64 (zext GR32:$val)), (SUBREG_TO_REG (i64 0), GR32:$val, sub_32)>;
+def : Pat<(i64 (zext GR32:$val)), (RISCV_ZEXT (i64 0), GR32:$val, sub_32)>;
 //TODO: how does this get handled in rocket/gcc
 def : Pat<(i64 (sext GR32:$val)), (SUBREG_TO_REG (i64 0), GR32:$val, sub_32)>;
 def : Pat<(i64 (anyext GR32:$val)), (SUBREG_TO_REG (i64 0), GR32:$val, sub_32)>;
-def :Pat<(i32 (trunc GR64:$src)), (EXTRACT_SUBREG GR64:$src, sub_32)>;
+def : Pat<(i32 (trunc GR64:$src)), (RISCV_EXTRACT_SUBREG GR64:$src, sub_32)>;
 def : Pat<(i64 imm64:$imm), (LI64 imm64:$imm)>; //cheat and use gas for these
 //def : Pat<(i32 imm32:$imm), (EXTRACT_SUBREG (SRLI64 (SLLI64 (LI64_32 imm32:$imm), 32), 32), sub_32)>; //cheat and use gas for these
 def : Pat<(i64 imm64sx12:$imm), (LI64 imm64sx12:$imm)>; 

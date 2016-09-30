@@ -457,8 +457,31 @@ RISCVInstrInfo::loadRegFromStackSlot(MachineBasicBlock &MBB,
 
 bool
 RISCVInstrInfo::expandPostRAPseudo(MachineBasicBlock::iterator MI) const {
+  const TargetInstrInfo *TII = STI.getInstrInfo();
+  const TargetRegisterInfo *TRI = STI.getRegisterInfo();
   switch (MI->getOpcode()) {
+  case RISCV::RISCV_EXTRACT_SUBREG: {
+    // Expand this to COPY now
+    assert(MI->getOperand(2).getImm() == 1 && "unexpected subreg class!");
+    MachineOperand &SrcMO = MI->getOperand(1);
+    MachineOperand &DstMO = MI->getOperand(0);
+    TII->copyPhysReg(*MI->getParent(), MI, MI->getDebugLoc(),
+                     DstMO.getReg(), TRI->getSubReg(SrcMO.getReg(), 1),
+                     SrcMO.isKill());
 
+    // Transfer implicit defs
+    if (MI->getNumOperands() > 3) {
+      assert(MI->getNumOperands() == 4);
+      MachineBasicBlock::iterator CopyMI = MI;
+      --CopyMI;
+      MachineOperand &MO = MI->getOperand(3);
+      assert(MO.isImplicit());
+      CopyMI->addOperand(MachineOperand::CreateReg(MO.getReg(), true, true));
+    }
+
+    MI->eraseFromParent();
+    return true;
+  }
   default:
     return false;
   }
