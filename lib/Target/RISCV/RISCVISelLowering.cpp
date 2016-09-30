@@ -1328,8 +1328,9 @@ SDValue RISCVTargetLowering::lowerVAARG(SDValue Op, SelectionDAG &DAG) const{
   SDValue VAList = DAG.getLoad(PtrVT, DL, InChain, VAListPtr,
                                MachinePointerInfo(SV), false, false, false, 0);
   // Increment the pointer, VAList, to the next vaarg.
-  SDValue NextPtr = DAG.getNode(ISD::ADD, DL, PtrVT, VAList,
-                                DAG.getIntPtrConstant(VT.getSizeInBits()/8, DL));
+  SDValue NextPtr =
+    DAG.getNode(ISD::ADD, DL, PtrVT, VAList,
+                DAG.getIntPtrConstant(Subtarget.isRV64()? 8:VT.getSizeInBits()/8, DL));
   // Store the incremented VAList to the legalized pointer.
   InChain = DAG.getStore(VAList.getValue(1), DL, NextPtr,
                          VAListPtr, MachinePointerInfo(SV), false, false, 0);
