@@ -1496,107 +1496,85 @@ emitCALL(MachineInstr *MI, MachineBasicBlock *BB) const {
 
 MachineBasicBlock *RISCVTargetLowering::
 emitSelectCC(MachineInstr *MI, MachineBasicBlock *BB) const {
-
-  const TargetInstrInfo *TII = BB->getParent()->getSubtarget().getInstrInfo();
-  DebugLoc DL = MI->getDebugLoc();
+  assert(MI->getOperand(0).getReg() != RISCV::zero
+         && MI->getOperand(0).getReg() != RISCV::zero_64
+         && "Destination is zero reg??");
+  assert(MI->getOperand(1).getReg() != RISCV::zero
+         && MI->getOperand(1).getReg() != RISCV::zero_64
+         && "Condition is zero reg??");
 
   // To "insert" a SELECT_CC instruction, we actually have to insert the
   // diamond control-flow pattern.  The incoming instruction knows the
   // destination vreg to set, the condition code register to branch on, the
-  // true/false values to select between, and a branch opcode to use.
+  // true/false values to select between.
   const BasicBlock *LLVM_BB = BB->getBasicBlock();
   MachineFunction::iterator It = BB->getIterator();
   ++It;
 
-  //  thisMBB:
+  //  BB:
   //  ...
-  //   TrueVal = ...
   //   setcc r1, r2, r3
-  //   bNE   r1, r0, copy1MBB
-  //   fallthrough --> copy0MBB
-  MachineBasicBlock *thisMBB  = BB;
+  //   bNE   r1, r0, trueMBB
+  //   fallthrough --> falseMBB
   MachineFunction *F = BB->getParent();
-  MachineBasicBlock *copy0MBB = F->CreateMachineBasicBlock(LLVM_BB);
-  MachineBasicBlock *sinkMBB  = F->CreateMachineBasicBlock(LLVM_BB);
-  F->insert(It, copy0MBB);
-  F->insert(It, sinkMBB);
+  MachineBasicBlock *falseMBB = F->CreateMachineBasicBlock(LLVM_BB);
+  MachineBasicBlock *trueMBB  = F->CreateMachineBasicBlock(LLVM_BB);
+  F->insert(It, falseMBB);
+  F->insert(It, trueMBB);
 
-  // Transfer the remainder of BB and its successor edges to sinkMBB.
-  sinkMBB->splice(sinkMBB->begin(), BB,
+  // Transfer the remainder of BB and its successor edges to trueMBB.
+  trueMBB->splice(trueMBB->begin(), BB,
                   std::next(MachineBasicBlock::iterator(MI)),
                   BB->end());
-  sinkMBB->transferSuccessorsAndUpdatePHIs(BB);
+  trueMBB->transferSuccessorsAndUpdatePHIs(BB);
 
   // Next, add the true and fallthrough blocks as its successors.
-  BB->addSuccessor(copy0MBB);
-  BB->addSuccessor(sinkMBB);
+  BB->addSuccessor(falseMBB);
+  BB->addSuccessor(trueMBB);
 
   const TargetRegisterInfo *TRI = getTargetMachine().getSubtargetImpl(*F->getFunction())->getRegisterInfo();
+  const TargetInstrInfo *TII = BB->getParent()->getSubtarget().getInstrInfo();
+  DebugLoc DL = MI->getDebugLoc();
+
+  unsigned RegOp2 = MI->getOperand(2).getReg(), RegOp3 = MI->getOperand(3).getReg();
+  unsigned TrueReg = RegOp2, FalseReg = RegOp3;
+  if (RegOp2 == RISCV::zero || RegOp2 == RISCV::zero_64 ||
+      RegOp3 == RISCV::zero || RegOp3 == RISCV::zero_64) {
+    assert( !( (RegOp2 == RISCV::zero || RegOp2 == RISCV::zero_64)
+               && (RegOp3 == RISCV::zero || RegOp3 == RISCV::zero_64) )
+            && "Both sources are zero??" );
+
+    // PHI instruction cannot have physreg operand, so we create COPY to virtreg.
+    const TargetRegisterClass *ZeroRC = MI->getRegClassConstraint(0, TII, TRI);
+    unsigned ZeroVReg = F->getRegInfo().createVirtualRegister(ZeroRC);
+    unsigned ZeroPReg = ZeroRC == &RISCV::GR64BitRegClass ? RISCV::zero_64 : RISCV::zero;
+    BuildMI(BB, DL, TII->get(TargetOpcode::COPY), ZeroVReg).addReg(ZeroPReg);
+
+    if (RegOp2 == RISCV::zero || RegOp2 == RISCV::zero_64) {
+      TrueReg = ZeroVReg;
+    } else {
+      FalseReg = ZeroVReg;
+    }
+  }
+
   const TargetRegisterClass *RC = MI->getRegClassConstraint(1, TII, TRI);
   unsigned bne = RC == &RISCV::GR64BitRegClass ? RISCV::BNE64 : RISCV::BNE;
   unsigned zero = RC == &RISCV::GR64BitRegClass ? RISCV::zero_64 : RISCV::zero;
-  BuildMI(BB, DL, TII->get(bne)).addMBB(sinkMBB).addReg(zero).addReg(MI->getOperand(1).getReg());
+  BuildMI(BB, DL, TII->get(bne)).addMBB(trueMBB).addReg(zero).addReg(MI->getOperand(1).getReg());
 
-  //  copy0MBB:
-  //   %FalseValue = ...
-  //   # fallthrough to sinkMBB
-  BB = copy0MBB;
+  //  falseMBB:
+  //   # fallthrough to trueMBB
+  falseMBB->addSuccessor(trueMBB);
 
-  // Update machine-CFG edges
-  BB->addSuccessor(sinkMBB);
-
-  //  sinkMBB:
-  //   %Result = phi [ %TrueValue, thisMBB ], [ %FalseValue, copy0MBB ]
+  //  trueMBB:
+  //   %Result = phi [ %TrueValue, BB ], [ %FalseValue, falseMBB ]
   //  ...
-  BB = sinkMBB;
-
-  //assume there is only one use of zero
-  if(MI->getOperand(0).getReg() == RISCV::zero ||
-     MI->getOperand(0).getReg() == RISCV::zero_64){
-    //Create a virtual register for zero and make a copy into it
-    const TargetRegisterClass *RC = MI->getOperand(0).getReg() == RISCV::zero_64 ? &RISCV::GR64BitRegClass : &RISCV::GR32BitRegClass;
-    unsigned VReg = F->getRegInfo().createVirtualRegister(RC);
-    BuildMI(*copy0MBB, copy0MBB->begin(), DL, TII->get(TargetOpcode::COPY), VReg)
-      .addReg(MI->getOperand(0).getReg());
-    //Do the actual phi using the virtual reg now
-    BuildMI(*BB, BB->begin(), DL,
-            TII->get(RISCV::PHI), VReg)
-      .addReg(MI->getOperand(3).getReg()).addMBB(copy0MBB)
-      .addReg(MI->getOperand(2).getReg()).addMBB(thisMBB);
-  }else if(MI->getOperand(2).getReg() == RISCV::zero || 
-           MI->getOperand(2).getReg() == RISCV::zero_64){
-    //Create a virtual register for zero and make a copy into it
-    const TargetRegisterClass *RC = MI->getOperand(2).getReg() == RISCV::zero_64 ? &RISCV::GR64BitRegClass : &RISCV::GR32BitRegClass;
-    unsigned VReg = F->getRegInfo().createVirtualRegister(RC);
-    BuildMI(*copy0MBB, copy0MBB->begin(), DL, TII->get(TargetOpcode::COPY), VReg)
-      .addReg(MI->getOperand(2).getReg());
-    //Do the actual phi using the virtual reg now
-    BuildMI(*BB, BB->begin(), DL,
-            TII->get(RISCV::PHI), MI->getOperand(0).getReg())
-      .addReg(MI->getOperand(3).getReg()).addMBB(thisMBB)
-      .addReg(VReg).addMBB(copy0MBB);
-  }else if(MI->getOperand(3).getReg() == RISCV::zero ||
-           MI->getOperand(3).getReg() == RISCV::zero_64){
-    //Create a virtual register for zero and make a copy into it
-    const TargetRegisterClass *RC = MI->getOperand(3).getReg() == RISCV::zero_64 ? &RISCV::GR64BitRegClass : &RISCV::GR32BitRegClass;
-    unsigned VReg = F->getRegInfo().createVirtualRegister(RC);
-    BuildMI(*copy0MBB, copy0MBB->begin(), DL, TII->get(TargetOpcode::COPY), VReg)
-      .addReg(MI->getOperand(3).getReg());
-    //Do the actual phi using the virtual reg now
-    BuildMI(*BB, BB->begin(), DL,
-            TII->get(RISCV::PHI), MI->getOperand(0).getReg())
-      .addReg(VReg).addMBB(copy0MBB)
-      .addReg(MI->getOperand(2).getReg()).addMBB(thisMBB);
-  }else{
-    //None of the registers is zero so everything is already a virt reg
-    BuildMI(*BB, BB->begin(), DL,
-            TII->get(RISCV::PHI), MI->getOperand(0).getReg())
-      .addReg(MI->getOperand(3).getReg()).addMBB(copy0MBB)
-      .addReg(MI->getOperand(2).getReg()).addMBB(thisMBB);
-  }
+  BuildMI(*trueMBB, trueMBB->begin(), DL,
+          TII->get(RISCV::PHI), MI->getOperand(0).getReg())
+    .addReg(TrueReg).addMBB(BB).addReg(FalseReg).addMBB(falseMBB);
 
   MI->eraseFromParent();   // The pseudo instruction is gone now.
-  return BB;
+  return trueMBB;
 }
 
 MachineBasicBlock *RISCVTargetLowering::
