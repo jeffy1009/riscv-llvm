@@ -326,7 +326,8 @@ void RISCVFrameLowering::determineCalleeSaves(MachineFunction &MF, BitVector &Sa
   if (isInt<12>(MaxSPOffset))
     return;
 
-  const TargetRegisterClass *RC = &RISCV::GR32BitRegClass;
+  const TargetRegisterClass *RC = STI.isRV64()?
+    &RISCV::GR64BitRegClass : &RISCV::GR32BitRegClass;
   int FI = MF.getFrameInfo()->CreateStackObject(RC->getSize(),
                                                 RC->getAlignment(), false);
   RS->addScavengingFrameIndex(FI);

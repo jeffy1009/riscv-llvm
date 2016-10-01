@@ -20,6 +20,11 @@ class RISCVFrameLowering : public TargetFrameLowering {
 public:
   RISCVFrameLowering();
 
+  // In RISCV, FP is set to the post-prolog SP (Don't know why..)
+  // Need to override this to false, so that emergency spill slot is always
+  // reachable from FP (so that the offset fits in the imm field of LD)
+  bool isFPCloseToIncomingSP() const { return false; }
+
   bool hasFP(const MachineFunction &MF) const;
 
   /// emitProlog/emitEpilog - These methods insert prolog and epilog code into
