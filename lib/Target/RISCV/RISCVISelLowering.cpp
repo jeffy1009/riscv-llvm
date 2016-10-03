@@ -816,7 +816,8 @@ LowerFormalArguments(SDValue Chain, CallingConv::ID CallConv, bool IsVarArg,
 
       InVals.push_back(ArgValue);
     } else { // !VA.isRegLoc()
-
+      assert(!Ins[i].Flags.isByVal()
+             && "Byval args should've been handled in clang TargetInfo.cpp");
       // sanity check
       assert(VA.isMemLoc());
 
@@ -968,6 +969,7 @@ RISCVTargetLowering::LowerCall(CallLoweringInfo &CLI,
       // Queue up the argument copies and emit them at the end.
       RegsToPass.push_back(std::make_pair(VA.getLocReg(), ArgValue));
     else if (Flags.isByVal()) {
+      assert(0 && "Byval args should've been handled in clang TargetInfo.cpp");
       assert(VA.isMemLoc());
       assert(Flags.getByValSize() &&
              "ByVal args of size 0 should have been ignored by front-end.");
