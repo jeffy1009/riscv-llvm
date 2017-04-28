@@ -756,7 +756,10 @@ LowerFormalArguments(SDValue Chain, CallingConv::ID CallConv, bool IsVarArg,
   CCInfo.AnalyzeFormalArguments(Ins,
     IsRV32 ? IsVarArg ? CC_RISCV32_VAR : CC_RISCV32 :
     IsVarArg ? CC_RISCV64_VAR : CC_RISCV64);
-  
+
+  RISCVFI->setFormalArgInfo(CCInfo.getNextStackOffset(),
+                            CCInfo.getInRegsParamsCount() > 0);
+
   for (unsigned i = 0, e = ArgLocs.size(); i != e; ++i) {
     CCValAssign &VA = ArgLocs[i];
     // Arguments stored on registers
