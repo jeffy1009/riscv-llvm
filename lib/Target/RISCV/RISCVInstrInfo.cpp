@@ -27,31 +27,34 @@ RISCVInstrInfo::RISCVInstrInfo(RISCVSubtarget &sti)
     RI(sti), STI(sti) {
 }
 
-// If MI is a simple load or store for a frame object, return the register
-// it loads or stores and set FrameIndex to the index of the frame object.
-// Return 0 otherwise.
-//
-// Flag is SimpleLoad for loads and SimpleStore for stores.
-static int isSimpleMove(const MachineInstr *MI, int &FrameIndex, int Flag) {
-  const MCInstrDesc &MCID = MI->getDesc();
-  if ((MCID.TSFlags & Flag) &&
-      MI->getOperand(1).isFI() &&
-      MI->getOperand(2).getImm() == 0 &&
-      MI->getOperand(3).getReg() == 0) {
-    FrameIndex = MI->getOperand(1).getIndex();
-    return MI->getOperand(0).getReg();
+unsigned RISCVInstrInfo::isLoadFromStackSlot(const MachineInstr *MI,
+                                               int &FrameIndex) const {
+  if (MI->getOpcode() == RISCV::LD ||
+      MI->getOpcode() == RISCV::LW ||
+      MI->getOpcode() == RISCV::LW64 ||
+      MI->getOpcode() == RISCV::LW64_32) {
+    if (MI->getOperand(2).isFI() && MI->getOperand(1).isImm() &&
+        MI->getOperand(1).getImm() == 0) {
+      FrameIndex = MI->getOperand(2).getIndex();
+      return MI->getOperand(0).getReg();
+    }
   }
   return 0;
 }
 
-unsigned RISCVInstrInfo::isLoadFromStackSlot(const MachineInstr *MI,
-                                               int &FrameIndex) const {
-  return isSimpleMove(MI, FrameIndex, RISCVII::SimpleLoad);
-}
-
 unsigned RISCVInstrInfo::isStoreToStackSlot(const MachineInstr *MI,
                                               int &FrameIndex) const {
-  return isSimpleMove(MI, FrameIndex, RISCVII::SimpleStore);
+  if (MI->getOpcode() == RISCV::SD ||
+      MI->getOpcode() == RISCV::SW ||
+      MI->getOpcode() == RISCV::SW64 ||
+      MI->getOpcode() == RISCV::SW64_32) {
+    if (MI->getOperand(2).isFI() && MI->getOperand(1).isImm() &&
+        MI->getOperand(1).getImm() == 0) {
+      FrameIndex = MI->getOperand(2).getIndex();
+      return MI->getOperand(0).getReg();
+    }
+  }
+  return 0;
 }
 
 /// Adjust SP by Amount bytes.
