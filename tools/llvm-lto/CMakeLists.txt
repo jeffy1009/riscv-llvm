@@ -7,6 +7,7 @@ set(LLVM_LINK_COMPONENTS
   Object
   Support
   Target
+  MTE
   )
 
 add_llvm_tool(llvm-lto

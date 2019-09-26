@@ -54,7 +54,20 @@
 #include "llvm/Transforms/IPO/PassManagerBuilder.h"
 #include "llvm/Transforms/ObjCARC.h"
 #include <system_error>
+
+#include "llvm/mte/ArgvTracker.h"
+#include "llvm/mte/ByvalHandler.h"
+#include "llvm/mte/CustomInliner.h"
+#include "llvm/mte/DummyPass.h"
+#include "llvm/mte/GlobalTracker.h"
+
 using namespace llvm;
+
+
+static cl::opt<bool>
+OptMTE("mte", cl::init(false), cl::desc("diwony mte"));
+
+
 
 const char* LTOCodeGenerator::getVersionString() {
 #ifdef LLVM_VERSION_INFO
@@ -453,6 +466,7 @@ void LTOCodeGenerator::applyScopeRestrictions() {
   ScopeRestrictionsDone = true;
 }
 
+
 /// Optimize merged modules using various IPO passes
 bool LTOCodeGenerator::optimize(bool DisableVerify, bool DisableInline,
                                 bool DisableGVNLoadPRE,
@@ -486,6 +500,16 @@ bool LTOCodeGenerator::optimize(bool DisableVerify, bool DisableInline,
 
   PMB.populateLTOPassManager(passes);
 
+  if (OptMTE){
+    passes.add(new ArgvTracker());
+    passes.add(new ByvalHandler());
+    passes.add(new GlobalTracker());
+    passes.add(new DummyPass());
+    passes.add(new CustomInliner());
+  }
+
+
+  
   // Run our queue of passes all at once now, efficiently.
   passes.run(*MergedModule);
 
