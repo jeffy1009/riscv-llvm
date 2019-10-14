@@ -79,6 +79,8 @@ void llvm::initializeCodeGen(PassRegistry &Registry) {
   initializeVirtRegMapPass(Registry);
   initializeVirtRegRewriterPass(Registry);
   initializeWinEHPreparePass(Registry);
+  //diwony
+  initializeMetaStackPass(Registry);
 }
 
 void LLVMInitializeCodeGen(LLVMPassRegistryRef R) {

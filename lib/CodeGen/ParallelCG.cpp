@@ -22,8 +22,13 @@
 #include "llvm/Support/thread.h"
 #include "llvm/Target/TargetMachine.h"
 #include "llvm/Transforms/Utils/SplitModule.h"
+#include "llvm/mte/MetaStack.h"
 
 using namespace llvm;
+
+static cl::opt<bool>
+OptMTE_metastack("mte_metastack", cl::init(false), cl::desc("metastack for mte"));
+
 
 static void codegen(Module *M, llvm::raw_pwrite_stream &OS,
                     const Target *TheTarget, StringRef CPU, StringRef Features,
@@ -34,6 +39,10 @@ static void codegen(Module *M, llvm::raw_pwrite_stream &OS,
       M->getTargetTriple(), CPU, Features, Options, RM, CM, OL));
 
   legacy::PassManager CodeGenPasses;
+  //diwony
+  if(OptMTE_metastack)
+    CodeGenPasses.add(createMetaStackPass());
+
   if (TM->addPassesToEmitFile(CodeGenPasses, OS, FileType))
     report_fatal_error("Failed to setup codegen");
   CodeGenPasses.run(*M);

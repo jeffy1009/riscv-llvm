@@ -330,6 +330,8 @@ int main(int argc, char **argv) {
   initializeWinEHPreparePass(Registry);
   initializeDwarfEHPreparePass(Registry);
   initializeSjLjEHPreparePass(Registry);
+  //diwony
+  initializeMetaStackPass(Registry);
 
 #ifdef LINK_POLLY_INTO_TOOLS
   polly::initializePollyPasses(Registry);

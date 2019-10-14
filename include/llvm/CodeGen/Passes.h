@@ -654,6 +654,9 @@ namespace llvm {
   /// memory accesses to target specific intrinsics.
   ///
   FunctionPass *createInterleavedAccessPass(const TargetMachine *TM);
+
+  //diwony
+  FunctionPass *createMetaStackPass(const TargetMachine *TM = nullptr);
 } // End llvm namespace
 
 /// Target machine pass initializer for passes with dependencies. Use with

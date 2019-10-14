@@ -137,6 +137,8 @@ namespace {
       (void) llvm::createRegionViewerPass();
       (void) llvm::createSCCPPass();
       (void) llvm::createSafeStackPass();
+      //diwony
+      (void) llvm::createMetaStackPass();
       (void) llvm::createScalarReplAggregatesPass();
       (void) llvm::createSingleLoopExtractorPass();
       (void) llvm::createStripSymbolsPass();

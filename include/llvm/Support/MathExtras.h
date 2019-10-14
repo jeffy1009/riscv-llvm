@@ -379,6 +379,13 @@ inline uint64_t ByteSwap_64(uint64_t Value) {
   return sys::SwapByteOrder_64(Value);
 }
 
+inline uint64_t alignTo(uint64_t Value, uint64_t Align, uint64_t Skew = 0) {
+  Skew %= Align;
+  return (Value + Align - 1 - Skew) / Align * Align + Skew;
+}
+
+
+
 /// \brief Count the number of ones from the most significant bit to the first
 /// zero bit.
 ///
