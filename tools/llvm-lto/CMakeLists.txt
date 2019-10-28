@@ -8,6 +8,8 @@ set(LLVM_LINK_COMPONENTS
   Support
   Target
   MTE
+  #softboundcets
+  SoftBoundCETS
   )
 
 add_llvm_tool(llvm-lto

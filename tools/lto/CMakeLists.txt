@@ -7,6 +7,8 @@ set(LLVM_LINK_COMPONENTS
   Support
   Target
   MTE
+  #LLVMsoftboundcets
+  SoftBoundCETS
   )
 
 set(SOURCES
