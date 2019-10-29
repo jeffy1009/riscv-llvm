@@ -303,8 +303,12 @@ void InitializeSoftBoundCETS:: constructCheckHandlers(Module & module){
 
   Type * Int32Type = IntegerType::getInt32Ty(module.getContext());
   std::vector<Constant *> CtorInits;
+
+  //PointerType *Int8PtrTy = Type::getInt8PtrTy(module.getContext());
+  
   CtorInits.push_back(ConstantInt::get(Int32Type, 0));
   CtorInits.push_back(global_init);
+  CtorInits.push_back(Constant::getNullValue(Type::getInt8PtrTy(module.getContext())));
   StructType * ST = ConstantStruct::getTypeForElements(CtorInits, false);
   Constant * RuntimeCtorInit = ConstantStruct::get(ST, CtorInits);
 

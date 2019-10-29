@@ -5207,7 +5207,7 @@ bool SoftBoundCETSPass::runOnModule(Module& module) {
 
   auto &TD = module.getDataLayout();
   //TD = &getAnalysis<DataLayout>();
-  TLI = &getAnalysis<TargetLibraryInfoWrapperPass>().getTLI();
+  //TLI = &getAnalysis<TargetLibraryInfoWrapperPass>().getTLI();
   //TLI = &getAnalysis<TargetLibraryInfo>();
 
   BuilderTy TheBuilder(module.getContext(), TargetFolder(TD));
