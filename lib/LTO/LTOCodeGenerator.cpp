@@ -512,8 +512,8 @@ bool LTOCodeGenerator::optimize(bool DisableVerify, bool DisableInline,
     passes.add(new ArgvTracker());
     passes.add(new ByvalHandler());
     passes.add(new GlobalTracker());
-    passes.add(new DummyPass());
-    passes.add(new CustomInliner());
+    //passes.add(new DummyPass());
+    //passes.add(new CustomInliner());
   }
 
 

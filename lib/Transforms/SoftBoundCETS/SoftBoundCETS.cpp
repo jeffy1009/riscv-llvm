@@ -42,7 +42,7 @@
 //===---------------------------------------------------------------------===//
 
 #include "llvm/Transforms/SoftBoundCETS/SoftBoundCETSPass.h"
-
+#include <llvm/mte/metadata.h>
 
 cl::opt<bool>
 eliminate_struct_checks
@@ -860,7 +860,9 @@ bool SoftBoundCETSPass::isFuncDefSoftBound(const std::string &str) {
     m_func_wrappers_available["realloc"] = true;
     m_func_wrappers_available["calloc"] = true;
     m_func_wrappers_available["malloc"] = true;
-    m_func_wrappers_available["mmap"] = true;
+    //m_func_wrappers_available["mmap"] = true;
+    //FIXME
+    //m_func_wrappers_available["mmap"] = false;
 
     m_func_wrappers_available["putchar"] = true;
     m_func_wrappers_available["times"] = true;
@@ -4041,13 +4043,16 @@ void SoftBoundCETSPass::handleStore(StoreInst* store_inst) {
 
 // Currently just a placeholder for functions introduced by us
 bool SoftBoundCETSPass::checkIfFunctionOfInterest(Function* func) {
-
+  //diwony todo : add the mte func
+  
   if(isFuncDefSoftBound(func->getName()))
     return false;
 
   if(func->isDeclaration())
     return false;
 
+  if (ISMETADATAFUNC(func->getName().str().c_str()))
+    return false;
 
   /* TODO: URGENT: Need to do base and bound propagation in variable
    * argument functions
@@ -5103,6 +5108,10 @@ void SoftBoundCETSPass::addBaseBoundGlobals(Module& M){
     
     if(!gv->hasInitializer())
       continue;
+
+    if(gv->getName() == "llvm.used"){
+      continue;
+    }
     
     /* gv->hasInitializer() is true */
     
