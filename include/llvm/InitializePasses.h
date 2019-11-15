@@ -311,6 +311,7 @@ void initializeLoopLoadEliminationPass(PassRegistry&);
 void initializeFunctionImportPassPass(PassRegistry &);
 //diwony
 void initializeMetaStackPass(PassRegistry&);
+void initializeTypeSanPass(PassRegistry&);
 }
 
 #endif

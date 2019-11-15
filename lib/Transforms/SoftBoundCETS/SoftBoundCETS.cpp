@@ -4054,6 +4054,9 @@ bool SoftBoundCETSPass::checkIfFunctionOfInterest(Function* func) {
   if (ISMETADATAFUNC(func->getName().str().c_str()))
     return false;
 
+  if (ISTYPESANFUNC(func->getName().str().c_str()))
+    return false;
+
   /* TODO: URGENT: Need to do base and bound propagation in variable
    * argument functions
    */

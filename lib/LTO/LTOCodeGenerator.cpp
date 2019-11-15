@@ -67,6 +67,10 @@
 #include "llvm/Transforms/SoftBoundCETS/InitializeSoftBoundCETS.h"
 #include "llvm/Transforms/SoftBoundCETS/SoftBoundCETSPass.h"
 
+// for typesan pass
+#include "llvm/mte/TypeSanUtil.h"
+#include "llvm/mte/TypeSanPass.h"
+
 using namespace llvm;
 
 static cl::opt<bool>
@@ -76,6 +80,8 @@ OptSOFTBOUND("softbound", cl::init(false), cl::desc("diwony softbound"));
 static cl::opt<bool>
 OptMTE("mte", cl::init(false), cl::desc("diwony mte"));
 
+static cl::opt<bool>
+OptTypeSan("typesan", cl::init(false), cl::desc("diwony typesan"));
 
 const char* LTOCodeGenerator::getVersionString() {
 #ifdef LLVM_VERSION_INFO
@@ -521,6 +527,10 @@ bool LTOCodeGenerator::optimize(bool DisableVerify, bool DisableInline,
     passes.add(new FixByValAttributesPass());
     passes.add(new InitializeSoftBoundCETS());
     passes.add(new SoftBoundCETSPass());
+  }
+
+  if (OptTypeSan){
+    passes.add(new TypeSan());
   }
 
   // Run our queue of passes all at once now, efficiently.

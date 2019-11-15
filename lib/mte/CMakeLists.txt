@@ -7,6 +7,8 @@ add_llvm_library(LLVMmte
   MaskPointers.cpp
   MidFatPtrs.cpp
   Utils.cpp
+  TypeSanPass.cpp
+  TypeSanUtil.cpp
   )
 
 add_dependencies(LLVMmte intrinsics_gen)
