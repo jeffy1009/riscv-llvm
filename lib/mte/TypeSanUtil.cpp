@@ -377,7 +377,7 @@ namespace llvm {
         }
         
 	bool TypeSanUtil::interestingType(Type *rootType) {
-
+          return true;
 		StructType *STy = dyn_cast<StructType>(rootType);
 		if(STy) {
                     return isInterestingStructType(STy);
@@ -430,24 +430,24 @@ namespace llvm {
 		// Inline stores if size and alignment are known constants (stack/globals)
 		bool didInline = false;
 		if (count != 0 && alignment != 0) {
-			long constantSize = ((structNode->size * count) + ((1 << alignment) - 1)) >> alignment;
+			long constantSize = ((tmp_size * count) + ((1 << alignment) - 1)) >> alignment;
 			if (constantSize <= 16) {
 				didInline = true;
-                                Value *typeInfoPtrInt = nullptr;
-                                if (count == 1) {
-                                     typeInfoPtrInt = ConstantExpr::getAdd(ConstantExpr::getPtrToInt(typeInfo, Int64Ty), ConstantInt::get(Int64Ty, 8));
-                                } else {
-                                    typeInfoPtrInt = ConstantExpr::getPtrToInt(typeInfo, Int64Ty);
-                                }
-                                Builder.CreateStore(ptrToStore, metadataPtr);
+                                // Value *typeInfoPtrInt = nullptr;
+                                // if (count == 1) {
+                                //      typeInfoPtrInt = ConstantExpr::getAdd(ConstantExpr::getPtrToInt(typeInfo, Int64Ty), ConstantInt::get(Int64Ty, 8));
+                                // } else {
+                                //     typeInfoPtrInt = ConstantExpr::getPtrToInt(typeInfo, Int64Ty);
+                                //}
+                                Builder.CreateStore(ptrToInt, metadataPtr);
                                 Value *metadataPtr2 = Builder.CreateGEP(metadataPtr, ConstantInt::get(Int64Ty, 1));
-                                Builder.CreateStore(typeInfoPtrInt, metadataPtr2);
+                                Builder.CreateStore(boundPtrInt, metadataPtr2);
                                 unsigned long offset = alignment;
 				for (int i = 1; i < constantSize; ++i) {
 					Value *metadataPtrWithIndex = Builder.CreateGEP(metadataPtr, ConstantInt::get(Int64Ty, 2 * i));
-                                        Builder.CreateStore(ptrToStore, metadataPtrWithIndex);
+                                        Builder.CreateStore(ptrToInt, metadataPtrWithIndex);
 					Value *metadataPtrWithIndex2 = Builder.CreateGEP(metadataPtr, ConstantInt::get(Int64Ty, 2 * i + 1));
-                                        Builder.CreateStore(typeInfoPtrInt, metadataPtrWithIndex2);
+                                        Builder.CreateStore(boundPtrInt, metadataPtrWithIndex2);
                                         offset += alignment;
                                 }
 			}
@@ -455,22 +455,22 @@ namespace llvm {
 		// Call out to helper if no inlining occured
 		if (!didInline) {
                         Value *metadataSize;
-                        Value *typeInfoPtrInt = nullptr;
+                        //Value *typeInfoPtrInt = nullptr;
 			if (count == 0) {
 				metadataSize = Builder.CreateLShr(Builder.CreateAdd(size, alignmentOffset), alignmentValue);
-                                typeInfoPtrInt = ConstantExpr::getPtrToInt(typeInfo, Int64Ty);
+                                //typeInfoPtrInt = ConstantExpr::getPtrToInt(typeInfo, Int64Ty);
 			} else {
-				metadataSize = Builder.CreateLShr(Builder.CreateAnd(Builder.CreateAdd(ConstantInt::get(Int64Ty, structNode->size * count), alignmentOffset),
+				metadataSize = Builder.CreateLShr(Builder.CreateAnd(Builder.CreateAdd(ConstantInt::get(Int64Ty, tmp_size * count), alignmentOffset),
                                                                             ConstantInt::get(Int64Ty, ((unsigned long)1 << 63) - 1)),
                                                         alignmentValue);
-                                if (count == 1) {
-                                    typeInfoPtrInt = ConstantExpr::getAdd(ConstantExpr::getPtrToInt(typeInfo, Int64Ty), ConstantInt::get(Int64Ty, 8));
-                                } else {
-                                    typeInfoPtrInt = ConstantExpr::getPtrToInt(typeInfo, Int64Ty);
-                                }
+                                // if (count == 1) {
+                                //     typeInfoPtrInt = ConstantExpr::getAdd(ConstantExpr::getPtrToInt(typeInfo, Int64Ty), ConstantInt::get(Int64Ty, 8));
+                                // } else {
+                                //     typeInfoPtrInt = ConstantExpr::getPtrToInt(typeInfo, Int64Ty);
+                                //}
 			}
 			Function *MetallocMemset = (Function*)SrcM->getOrInsertFunction("metalloc_widememset", VoidTy, Int64PtrTy, Int64Ty, Int64Ty, Int64Ty, nullptr);
-			Value *Param[4] = {metadataPtr, metadataSize, ptrToStore, typeInfoPtrInt};
+			Value *Param[4] = {metadataPtr, metadataSize, ptrToInt, boundPtrInt};
 			Builder.CreateCall(MetallocMemset, Param);
                 }
 

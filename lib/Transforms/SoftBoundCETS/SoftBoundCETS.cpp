@@ -4884,13 +4884,14 @@ void SoftBoundCETSPass::insertMetadataLoad(LoadInst* load_inst){
   /* If the load returns a pointer, then load the base and bound
    * from the shadow space
    */
-  Value* pointer_operand_bitcast =  castToVoidPtr(pointer_operand, insert_at);      
+  Value* pointer_operand_bitcast =  castToVoidPtr(pointer_operand, insert_at);
+  Value* load_pointer_softbound = castToVoidPtr(load_inst_value, insert_at);
   Instruction* first_inst_func = dyn_cast<Instruction>(load_inst->getParent()->getParent()->begin()->begin());
   assert(first_inst_func && "function doesn't have any instruction and there is load???");
   
   /* address of pointer being pushed */
-  args.push_back(pointer_operand_bitcast);
-    
+  //args.push_back(pointer_operand_bitcast);
+  args.push_back(load_pointer_softbound);  
 
   if(spatial_safety){
     

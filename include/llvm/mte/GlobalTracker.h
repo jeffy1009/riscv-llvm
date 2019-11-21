@@ -73,6 +73,7 @@ struct GlobalTracker : public ModulePass {
 			"has no return instruction or you forgot to link in "
 			"libmetadata.a");
 
+        return false;
         IRBuilder<> B(globalInitReturn);
 
         for (auto& global: M->globals()) {

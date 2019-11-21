@@ -230,6 +230,9 @@ namespace llvm{
 					GV.getName() == "llvm.used") {
 					continue;
 				}
+                                if (ISINTERESTINGTYPE(GV.getName().str().c_str())){
+                                  continue;
+                                }
 				if (TypeUtil.interestingType(GV.getValueType())) {
 					trackedGlobals.push_back(&GV);
 				}

@@ -40,10 +40,32 @@ static char const *METADATAFUNCS[] = {  "metaset_1", "metaset_2", "metaset_4", "
                                         "metaget_base_1", "metaget_base_2", "metaget_base_4", "metaget_base_8", "metaget_base_16",
                                         "metaget_base_deep_8", "metaget_base_deep_16", "metaget_base_deep_32",
                                         "metacheck_1", "metacheck_2", "metacheck_4", "metacheck_8", "metacheck_16",
-                                        "initialize_global_metadata", "initialize_metadata", "unsafe_stack_free_meta",  "meta_report_stats", "__metastack_init", "_ZL18unsafe_stack_allocmm", "unsafe_stack_alloc_meta", "unsafe_stack_setup", "_ZL18unsafe_stack_setupPvmm", "_ZL23unsafe_stack_alloc_metaPvm"};
+                                        "initialize_global_metadata", "initialize_metadata", "unsafe_stack_free_meta",  "meta_report_stats", "__metastack_init", "_ZL18unsafe_stack_allocmm", "unsafe_stack_alloc_meta", "unsafe_stack_setup", "_ZL18unsafe_stack_setupPvmm", "_ZL23unsafe_stack_alloc_metaPvm", "argvcopy", "strarrcopy"};
 
 
 static char const *TYPESANFUNCS[] = {"metalloc_init_globals", "metalloc_widememset"};
+
+static char const *GLOBALSTOSKIP[] = {"_ZL18unsafe_stack_start", "__metastack_preinit", "__metastack_tracked_stack_ptr", "__metaglobal_preinit", "__executable_start", "_ZL8pageSize", "_ZL18unsafe_stack_guard", "_ZL17unsafe_stack_size"};
+
+
+__attribute__ ((unused)) static int ISINTERESTINGTYPE(const char *name) {
+    for (unsigned int i = 0; i < (sizeof(GLOBALSTOSKIP) / sizeof(GLOBALSTOSKIP[0])); ++i) {
+        int different = 0;
+        char const *lhs = GLOBALSTOSKIP[i];
+        const char *rhs = name;
+        while (*lhs != 0 && *rhs != 0)
+            if (*lhs++ != *rhs++) {
+                different = 1;
+                break;
+            }
+        if (*lhs != *rhs)
+            different = 1;
+        if (different == 0)
+            return 1;
+    }
+    return 0;
+}
+
 
 __attribute__ ((unused)) static int ISMETADATAFUNC(const char *name) {
     for (unsigned int i = 0; i < (sizeof(METADATAFUNCS) / sizeof(METADATAFUNCS[0])); ++i) {
