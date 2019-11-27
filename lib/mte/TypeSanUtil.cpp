@@ -392,9 +392,23 @@ namespace llvm {
 	
 	void TypeSanUtil::insertUpdateMetalloc(Module *SrcM, IRBuilder<> &Builder, Value *ptrValue, Type *allocationType, int alignment, unsigned long count, Value *size, string allocName) {
                 Value *ptrToInt = Builder.CreatePtrToInt(ptrValue, Int64Ty);
-
+                Value *boundPtr = Builder.CreateGEP(ptrValue, ConstantInt::get(Int64Ty, 1));
+                Value *boundPtrInt = Builder.CreatePtrToInt(boundPtr, Int64Ty);
                 TypeNode *typeNode = getStructLayout(DL, allocationType, nullptr);
                 StructNode *structNode = nullptr;
+                int tmp_size;
+                
+                if(typeNode==NULL){
+                  ArrayType *Aty = dyn_cast<ArrayType>(allocationType);
+                  if(Aty){
+                    tmp_size=DL.getTypeAllocSize(allocationType);
+                    //tmp_size=Aty->getNumElements();
+                  }
+                  else
+                    tmp_size=1;
+                  count=1;
+                }
+                else{
                 if (count != 0) {
                     ArrayNode *tmpArrayNode = ArrayNode::create(count, typeNode);
                     structNode = tmpArrayNode->element;
@@ -405,8 +419,11 @@ namespace llvm {
                         structNode = typeNode->asArrayNode()->element;
                     }
                 }
+                tmp_size=structNode->size;
+                }
 		string typeName;
-                GlobalVariable *typeInfo = getOrPopulateTypeInfo(SrcM, Int64Ty, structNode, typeName);
+                //GlobalVariable *typeInfo = getOrPopulateTypeInfo(SrcM, Int64Ty, structNode, typeName);
+                /*
                 Value *ptrToStore;
                 // No support for anonymous structs yet
                 if (structNode->baseType->isLiteral()) {
@@ -414,6 +431,7 @@ namespace llvm {
                 } else {
                     ptrToStore = ptrToInt;
                 }
+                */
 
 		Value *pageIdx = Builder.CreateLShr(ptrToInt, ConstantInt::get(Int64Ty, PAGESHIFT));
 		Value *pageTableBase = Builder.CreateIntToPtr(MetaPageTable, Int64PtrTy);
