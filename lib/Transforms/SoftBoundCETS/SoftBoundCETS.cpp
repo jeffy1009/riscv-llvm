@@ -756,7 +756,8 @@ bool SoftBoundCETSPass::isFuncDefSoftBound(const std::string &str) {
     m_func_wrappers_available["setreuid"] = true;
     m_func_wrappers_available["mkstemp"] = true;
     m_func_wrappers_available["getuid"] = true;
-    m_func_wrappers_available["getrlimit"] = true;
+    // TODO
+    //m_func_wrappers_available["getrlimit"] = true;
     m_func_wrappers_available["setrlimit"] = true;
     m_func_wrappers_available["fread"] = true;
     m_func_wrappers_available["umask"] = true;

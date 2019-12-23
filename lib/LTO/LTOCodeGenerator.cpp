@@ -71,6 +71,8 @@
 #include "llvm/mte/TypeSanUtil.h"
 #include "llvm/mte/TypeSanPass.h"
 
+#include "llvm/Transforms/Scalar.h"
+
 using namespace llvm;
 
 static cl::opt<bool>
@@ -524,6 +526,7 @@ bool LTOCodeGenerator::optimize(bool DisableVerify, bool DisableInline,
 
 
   if (OptSOFTBOUND){
+    passes.add(createCFGSimplificationPass());
     passes.add(new FixByValAttributesPass());
     passes.add(new InitializeSoftBoundCETS());
     passes.add(new SoftBoundCETSPass());
