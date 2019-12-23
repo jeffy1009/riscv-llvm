@@ -99,7 +99,7 @@ class FixByValAttributesPass: public ModulePass{
   bool transformFunction(Function*);
   bool checkTypeHasPtrs(Argument*);
   bool checkPtrsInST(StructType*);
-  void createGEPStores(Value*, Value*,StructType*, Instruction*, 
+  void createGEPStores(Value*, Value*,StructType*, Instruction*,
                        std::vector<Value*>);
 
  public:
@@ -107,8 +107,7 @@ class FixByValAttributesPass: public ModulePass{
  FixByValAttributesPass(): ModulePass(ID){
   }
   const char* getPassName() const { return "FixByValAttributes";}
-  
+
 };
 
 #endif
-

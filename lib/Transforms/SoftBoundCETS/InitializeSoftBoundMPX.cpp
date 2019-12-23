@@ -1,4 +1,4 @@
-//=== SoftBound/InitializeSoftBoundMPX.cpp - Helper Pass for SoftBoundMPX pass--*- C++ -*===// 
+//=== SoftBound/InitializeSoftBoundMPX.cpp - Helper Pass for SoftBoundMPX pass--*- C++ -*===//
 // Copyright (c) 2014 Santosh Nagarakatte, Milo M. K. Martin. All rights reserved.
 //
 // Developed by: Santosh Nagarakatte,
@@ -6,7 +6,7 @@
 //               https://github.com/santoshn/softboundcets-34/
 //               http://www.cs.rutgers.edu/~santosh.nagarakatte/
 //
-//               in collaboration with 
+//               in collaboration with
 //
 //               Milo M.K. Martin, Jianzhou Zhao, Steve Zdancewic
 //               Department of Computer and Information Sciences,
@@ -66,31 +66,31 @@ extern cl::opt<bool> disable_temporal_safety;
 
 char InitializeSoftBoundMPX :: ID = 0;
 
-static RegisterPass<InitializeSoftBoundMPX> P 
+static RegisterPass<InitializeSoftBoundMPX> P
 ("InitializeSoftBoundMPX","Prototype Creator Pass for Softboundmpx");
 
 void InitializeSoftBoundMPX:: constructShadowStackHandlers(Module & module){
 
   Type* VoidTy = Type::getVoidTy(module.getContext());
-  Type* 
+  Type*
     VoidPtrTy = PointerType::getUnqual(Type::getInt8Ty(module.getContext()));
   Type* SizeTy = Type::getInt64Ty(module.getContext());
-  
+
   Type* Int32Ty = Type::getInt32Ty(module.getContext());
-  module.getOrInsertFunction("__softboundmpx_allocate_shadow_stack_space", 
+  module.getOrInsertFunction("__softboundmpx_allocate_shadow_stack_space",
                              VoidTy, Int32Ty, NULL);
-  module.getOrInsertFunction("__softboundmpx_deallocate_shadow_stack_space", 
+  module.getOrInsertFunction("__softboundmpx_deallocate_shadow_stack_space",
                              VoidTy, NULL);
 
 
-  module.getOrInsertFunction("__softboundmpx_load_base_shadow_stack", 
+  module.getOrInsertFunction("__softboundmpx_load_base_shadow_stack",
 			     VoidPtrTy, Int32Ty, NULL);
-  module.getOrInsertFunction("__softboundmpx_load_bound_shadow_stack", 
+  module.getOrInsertFunction("__softboundmpx_load_bound_shadow_stack",
                              VoidPtrTy, Int32Ty, NULL);
-  
-  module.getOrInsertFunction("__softboundmpx_store_base_shadow_stack", 
+
+  module.getOrInsertFunction("__softboundmpx_store_base_shadow_stack",
 			     VoidTy, VoidPtrTy, Int32Ty, NULL);
-  module.getOrInsertFunction("__softboundmpx_store_bound_shadow_stack", 
+  module.getOrInsertFunction("__softboundmpx_store_bound_shadow_stack",
 			     VoidTy, VoidPtrTy, Int32Ty, NULL);
 
 }
@@ -98,35 +98,35 @@ void InitializeSoftBoundMPX:: constructShadowStackHandlers(Module & module){
 void InitializeSoftBoundMPX:: constructMetadataHandlers(Module & module){
 
   Type* VoidTy = Type::getVoidTy(module.getContext());
-  Type* 
+  Type*
     VoidPtrTy = PointerType::getUnqual(Type::getInt8Ty(module.getContext()));
   Type* SizeTy = Type::getInt64Ty(module.getContext());
-  
+
   Type* Int32Ty = Type::getInt32Ty(module.getContext());
 
-  module.getOrInsertFunction("__softboundmpx_introspect_metadata", 
+  module.getOrInsertFunction("__softboundmpx_introspect_metadata",
                              VoidTy, VoidPtrTy, VoidPtrTy, Int32Ty, NULL);
-  module.getOrInsertFunction("__softboundmpx_copy_metadata", 
+  module.getOrInsertFunction("__softboundmpx_copy_metadata",
                              VoidTy, VoidPtrTy, VoidPtrTy, SizeTy, NULL);
 
   Type* PtrVoidPtrTy = PointerType::getUnqual(VoidPtrTy);
   Type* PtrSizeTy = PointerType::getUnqual(SizeTy);
-  
+
 
   module.getOrInsertFunction("__softboundmpx_metadata_load",
 			     VoidTy, VoidPtrTy, PtrVoidPtrTy, PtrVoidPtrTy,
 			     NULL);
-  
-  module.getOrInsertFunction("__softboundmpx_metadata_store", 
-			     VoidTy, VoidPtrTy, VoidPtrTy, 
+
+  module.getOrInsertFunction("__softboundmpx_metadata_store",
+			     VoidTy, VoidPtrTy, VoidPtrTy,
 			     VoidPtrTy, VoidPtrTy, NULL);
-  
+
   module.getOrInsertFunction("__softboundmpx_memcopy_check",
-			     VoidTy, VoidPtrTy, VoidPtrTy, SizeTy, 
+			     VoidTy, VoidPtrTy, VoidPtrTy, SizeTy,
 			     VoidPtrTy, VoidPtrTy, VoidPtrTy, VoidPtrTy, NULL);
-  
+
   module.getOrInsertFunction("__softboundmpx_memset_check",
-			     VoidTy, VoidPtrTy,SizeTy, 
+			     VoidTy, VoidPtrTy,SizeTy,
 			     VoidPtrTy, VoidPtrTy, NULL);
 
   module.getOrInsertFunction("__softboundmpx_spatial_call_dereference_check",
@@ -139,7 +139,7 @@ void InitializeSoftBoundMPX:: constructMetadataHandlers(Module & module){
 
   module.getOrInsertFunction("__softboundmpx_print_metadata", VoidTy, VoidPtrTy, VoidPtrTy, VoidPtrTy, size_ty, sizet_ptr_ty, NULL);
 
-  
+
   module.getOrInsertFunction("__softboundmpx_dummy", VoidTy, NULL);
 
   Type* bool_ty = Type::getInt1Ty(module.getContext());
@@ -156,32 +156,32 @@ void InitializeSoftBoundMPX:: constructCheckHandlers(Module & module){
   Type* size_ty = Type::getInt64Ty(module.getContext());
 
   module.getOrInsertFunction("__softboundmpx_spatial_load_dereference_check",
-                             void_ty, void_ptr_ty, void_ptr_ty, 
+                             void_ty, void_ptr_ty, void_ptr_ty,
                              void_ptr_ty, size_ty, NULL);
 
-  module.getOrInsertFunction("__softboundmpx_spatial_store_dereference_check", 
-                             void_ty, void_ptr_ty, void_ptr_ty, 
+  module.getOrInsertFunction("__softboundmpx_spatial_store_dereference_check",
+                             void_ty, void_ptr_ty, void_ptr_ty,
                              void_ptr_ty, size_ty, NULL);
 
 
-  Function* global_init = (Function *) module.getOrInsertFunction("__softboundmpx_global_init", 
+  Function* global_init = (Function *) module.getOrInsertFunction("__softboundmpx_global_init",
                                                                   void_ty, NULL);
 
   global_init->setDoesNotThrow();
   global_init->setLinkage(GlobalValue::InternalLinkage);
 
-  BasicBlock* BB = BasicBlock::Create(module.getContext(), 
+  BasicBlock* BB = BasicBlock::Create(module.getContext(),
                                       "entry", global_init);
-  
+
   Function* softboundmpx_init = (Function*) module.getOrInsertFunction("__softboundmpx_init", void_ty, Type::getInt32Ty(module.getContext()), NULL);
 
-  
+
   SmallVector<Value*, 8> args;
   Constant * const_one = ConstantInt::get(Type::getInt32Ty(module.getContext()), 1);
-  
+
   args.push_back(const_one);
   Instruction* ret = ReturnInst::Create(module.getContext(), BB);
-  
+
   CallInst::Create(softboundmpx_init, args, "", ret);
 
 
@@ -246,10 +246,10 @@ bool InitializeSoftBoundMPX:: runOnModule (Module& module){
   // if(disable_temporal_safety){
   //   temporal_safety = false;
   // }
-  
+
   constructCheckHandlers(module);
   constructShadowStackHandlers(module);
-  constructMetadataHandlers(module); 
+  constructMetadataHandlers(module);
   //  constructAuxillaryFunctionHandlers(module);
   return true;
 }

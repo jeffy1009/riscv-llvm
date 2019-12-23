@@ -29,11 +29,11 @@ class InitializeSoftBoundXMM: public ModulePass {
   void constructMetadataHandlers(Module &);
   void constructShadowStackHandlers(Module &);
   void constructAuxillaryFunctionHandlers(Module &);
-  InitializeSoftBoundXMM(): ModulePass(ID){        
+  InitializeSoftBoundXMM(): ModulePass(ID){
     spatial_safety_xmm = true;
     temporal_safety_xmm = false;
   }
-  
+
   const char* getPassName() const { return "InitializeSoftBoundXMM";}
 };
 

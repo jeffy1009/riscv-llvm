@@ -97,7 +97,7 @@ using namespace llvm;
 
 
 class InstCountPass: public ModulePass{
-  
+
  private:
   Function* m_storechecks_func;
   Function* m_loadchecks_func;

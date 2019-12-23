@@ -25,12 +25,11 @@ class StripSBCETSIntrinsics: public FunctionPass {
 
   bool iterateOverFunctions(Function&);
 
-  StripSBCETSIntrinsics(): FunctionPass(ID){       
+  StripSBCETSIntrinsics(): FunctionPass(ID){
   }
-  
+
   const char* getPassName() const { return "StripSBCETSIntrinsics";}
 };
 
 
 #endif
-

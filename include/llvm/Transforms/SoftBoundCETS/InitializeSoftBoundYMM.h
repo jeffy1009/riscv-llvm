@@ -27,9 +27,9 @@ class InitializeSoftBoundYMM: public ModulePass {
   void constructMetadataHandlers(Module &);
   void constructShadowStackHandlers(Module &);
   void constructAuxillaryFunctionHandlers(Module &);
-  InitializeSoftBoundYMM(): ModulePass(ID){        
+  InitializeSoftBoundYMM(): ModulePass(ID){
   }
-  
+
   const char* getPassName() const { return "InitializeSoftBoundYMM";}
 };
 

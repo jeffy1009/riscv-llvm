@@ -20,7 +20,7 @@ class InitializeSoftBoundMPX: public ModulePass {
  private:
   bool spatial_safety;
   bool temporal_safety;
-  
+
  public:
   bool runOnModule(Module &);
   static char ID;
@@ -29,11 +29,11 @@ class InitializeSoftBoundMPX: public ModulePass {
   void constructMetadataHandlers(Module &);
   void constructShadowStackHandlers(Module &);
   void constructAuxillaryFunctionHandlers(Module &);
-  InitializeSoftBoundMPX(): ModulePass(ID){        
+  InitializeSoftBoundMPX(): ModulePass(ID){
     spatial_safety = true;
     temporal_safety= false; // gykim spatial
   }
-  
+
   const char* getPassName() const { return "InitializeSoftBoundMPX";}
 };
 
