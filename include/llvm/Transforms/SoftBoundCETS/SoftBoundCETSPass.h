@@ -280,6 +280,7 @@ class SoftBoundCETSPass: public ModulePass {
   bool runOnModule(Module&);
   void runOnLoop(Loop *L, LoopInfo *LI,
                  DenseMap<Loop *, bool> &MTELoopInfo);
+  void PrintDenseMap(DenseMap<Loop *, bool> &MTELoopInfo);
   void prepareMTEAssignment(Function*);
   void initializeSoftBoundVariables(Module&);
   void identifyOriginalInst(Function*);

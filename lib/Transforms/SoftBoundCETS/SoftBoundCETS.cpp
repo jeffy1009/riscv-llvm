@@ -319,21 +319,27 @@ void SoftBoundCETSPass::runOnLoop(Loop *L, LoopInfo *LI,
         // We already have info for this subloop
         if (MTELoopInfo[subLoop]) {
           MTELoopInfo[L] = true;
-          return;
         }
-      } else {
+      }
+      else {
         runOnLoop(LI->getLoopFor(BB), LI, MTELoopInfo);
       }
-    } else {
+    }
+    else {
       // This BB does not belong to a subloop
       for (auto &I : BB->getInstList()) {
         if (isa<CallInst>(&I) || isa<InvokeInst>(&I)) {
           MTELoopInfo[L] = true;
-          return;
+          break;
         }
-      }
+      } // Inst loop ends
     }
-  }
+  } // BB loop ends
+
+
+  return;
+}
+
 
   return;
 }
@@ -341,13 +347,15 @@ void SoftBoundCETSPass::runOnLoop(Loop *L, LoopInfo *LI,
 void SoftBoundCETSPass::prepareMTEAssignment(Function *func_ptr) {
   LoopInfo *LI = &getAnalysis<LoopInfoWrapperPass>(*func_ptr).getLoopInfo();
   DenseMap<Loop *, bool> MTELoopInfo;
+  BlockFrequencyInfo *BFI =
+    &(getAnalysis<BlockFrequencyInfoWrapperPass>(*func_ptr).getBFI());
+  Value* pointer_operand = NULL;
+
 
   // Find if loop has call instructions
   for (auto I = LI->begin(), E = LI->end(); I != E; I++)
     runOnLoop(*I, LI, MTELoopInfo);
 
-  BlockFrequencyInfo *BFI =
-    &(getAnalysis<BlockFrequencyInfoWrapperPass>(*func_ptr).getBFI());
 
   RangeInfoMap.clear();
 
@@ -373,9 +381,24 @@ void SoftBoundCETSPass::prepareMTEAssignment(Function *func_ptr) {
       if (!isa<LoadInst>(insn) && !isa<StoreInst>(insn))
         continue;
 
+      if(isa<LoadInst>(insn)){
+        LoadInst* ldi = dyn_cast<LoadInst>(insn);
+        assert(ldi && "not a load instruction");
+        pointer_operand = ldi->getPointerOperand();
+      }
+
+      if(isa<StoreInst>(insn)){
+        StoreInst* sti = dyn_cast<StoreInst>(i_begin);
+        assert(sti && "not a store instruction");
+        pointer_operand = sti->getOperand(1);
+
+      }
+
+      assert(pointer_operand && "pointer operand null?");
+
       SmallPtrSet<Value *, 8> Visited;
       Value *Root = 0;
-      findPtrRoot(insn, Visited, Root);
+      findPtrRoot(pointer_operand, Visited, Root);
 
       Loop *RootLoop;
       if (isa<Argument>(Root) || isa<Constant>(Root)) {
@@ -5393,6 +5416,10 @@ void SoftBoundCETSPass::identifyOriginalInst (Function * func) {
 
 bool SoftBoundCETSPass::runOnModule(Module& module) {
 
+  if (std::getenv("bar") == (char*) -1) {
+    ((llvm::Function*)nullptr)->viewCFGOnly();
+    return false;
+  }
   spatial_safety = true;
   temporal_safety = false; // gykim spatial
 
