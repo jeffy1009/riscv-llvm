@@ -431,6 +431,38 @@ void SoftBoundCETSPass::prepareMTEAssignment(Function *func_ptr) {
       RangeInfoMap[Root][CurLoop].Cost += BFI->getBlockFreq(BB).getFrequency();
     }
   }
+
+  // Sort according to the cost (descending order)
+  std::multimap<uint64_t, std::pair<Value *, Loop *>, std::greater<uint64_t> > RangeInfoSorted;
+  for (auto I : RangeInfoMap)
+    for (auto II : I.second)
+      RangeInfoSorted.insert(std::pair<uint64_t,
+                            std::pair<Value *, Loop *> >(II.second.Cost,
+                                                         std::pair<Value *, Loop *>(I.first, II.first)));
+
+  // Assign Tags
+  // initialize data structure for 16 tags
+  SmallVector<SmallPtrSet<Loop *, 4>, 16> TagStatus(16);
+  for (auto I : RangeInfoSorted) {
+    for (int i = 0; i < 16; i++) {
+      Loop *ThisRange = I.second.second;
+      bool CanAssign = true;
+      for (auto II : TagStatus[i]) {
+        Loop *Occupied = &*II;
+        if (ThisRange->contains(Occupied) || Occupied->contains(ThisRange)) {
+          CanAssign = false;
+          break;
+        }
+      }
+
+      if (CanAssign) {
+        Value *Root = I.second.first;
+        TagStatus[i].insert(ThisRange);
+        RangeInfoMap[Root][ThisRange].TagAssigned = true;
+        break;
+      }
+    }
+  }
 }
 
 
