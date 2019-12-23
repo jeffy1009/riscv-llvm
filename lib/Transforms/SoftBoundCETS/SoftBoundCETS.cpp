@@ -340,6 +340,13 @@ void SoftBoundCETSPass::runOnLoop(Loop *L, LoopInfo *LI,
   return;
 }
 
+void SoftBoundCETSPass::PrintDenseMap(DenseMap<Loop *, bool> &MTELoopInfo){
+
+  DenseMap<Loop *, bool>::iterator iter;
+  for (iter = MTELoopInfo.begin(); iter != MTELoopInfo.end(); iter++)
+    std::cout << "Loop: " << iter->first << ", Call?: " << iter->second << " ";
+
+  std::cout << std::endl;
 
   return;
 }
