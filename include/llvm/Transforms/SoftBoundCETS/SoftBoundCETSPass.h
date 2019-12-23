@@ -88,6 +88,7 @@
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/Analysis/CallGraph.h"
 #include "llvm/Analysis/AliasAnalysis.h"
+#include "llvm/Analysis/BlockFrequencyInfo.h"
 #include "llvm/Analysis/LoopInfo.h"
 #include "llvm/IR/CallSite.h"
 #include "llvm/IR/CFG.h"
@@ -265,10 +266,16 @@ class SoftBoundCETSPass: public ModulePass {
      32bit */
   bool m_is_64_bit;
   
+  /* MTE related data structures */
+  DenseMap<Value *, DenseMap<Loop *, RangeInfo> > RangeInfoMap;
+
   /* Main functions implementing the structure of the Softboundcets
      pass
    */
   bool runOnModule(Module&);
+  void runOnLoop(Loop *L, LoopInfo *LI,
+                 DenseMap<Loop *, bool> &MTELoopInfo);
+  void prepareMTEAssignment(Function*);
   void initializeSoftBoundVariables(Module&);
   void identifyOriginalInst(Function*);
   bool isAllocaPresent(Function*);
@@ -508,6 +515,7 @@ class SoftBoundCETSPass: public ModulePass {
   void getAnalysisUsage(AnalysisUsage& au) const {
     au.addRequired<DominatorTreeWrapperPass>();
     au.addRequired<LoopInfoWrapperPass>();
+    au.addRequired<BlockFrequencyInfoWrapperPass>();
     //au.addRequired<DataLayout>();
     //au.addRequired<TargetLibraryInfo>();
   }

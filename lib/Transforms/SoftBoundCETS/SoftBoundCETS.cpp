@@ -228,6 +228,184 @@ char SoftBoundCETSPass:: ID = 0;
 //static RegisterPass<SoftBoundCETSPass> P ("SoftBoundCETSPass",
 //                                          "SoftBound Pass for Spatial Safety");
 
+///////////////////////////////
+// MTE related
+///////////////////////////////
+
+static bool setRoot(Value *V, Value *&CurRoot) {
+  if (!CurRoot) {
+    CurRoot = V;
+    return true;
+  }
+
+  if (CurRoot==V)
+    return true;
+
+  return false;
+}
+
+bool SoftBoundCETSPass::findPtrRoot(Value *V, SmallPtrSet<Value *, 8> &Visited,
+                                    Value *&CurRoot) {
+  if (!Visited.insert(V).second)
+    return true;
+
+  if (isa<Argument>(V))
+    return setRoot(V, CurRoot);
+
+  if (isa<Constant>(V))
+    return setRoot(V, CurRoot);
+
+  switch (cast<Instruction>(V)->getOpcode()) {
+  case Instruction::Alloca:
+    return setRoot(V, CurRoot);
+  case Instruction::Call:
+  case Instruction::ExtractValue: // TODO
+  case Instruction::Invoke:
+  case Instruction::IntToPtr: // TODO
+  case Instruction::Load:
+    // if (SE->isLoopInvariant(SE->getSCEV(V), L))
+      return setRoot(V, CurRoot);
+    // else
+    //   return false;
+  case Instruction::PtrToInt:
+    return findPtrRoot(cast<User>(V)->getOperand(0), Visited, CurRoot);
+  case Instruction::BitCast: {
+    // if (SE->isLoopInvariant(SE->getSCEV(V), L))
+    //   return setRoot(V, CurRoot);
+    return findPtrRoot(cast<BitCastInst>(V)->stripPointerCasts(), Visited,
+                       CurRoot);
+  }
+  case Instruction::GetElementPtr: {
+    // if (SE->isLoopInvariant(SE->getSCEV(V), L))
+    //   return setRoot(V, CurRoot);
+    return findPtrRoot(cast<GetElementPtrInst>(V)->getPointerOperand(), Visited,
+                       CurRoot);
+  }
+  case Instruction::PHI: {
+    // if (SE->isLoopInvariant(SE->getSCEV(V), L))
+      return setRoot(V, CurRoot);
+    // PHINode *Phi = cast<PHINode>(V);
+    // bool Maybe = true;
+    // for (unsigned i = 0, e = Phi->getNumIncomingValues(); i != e; i++)
+    //   Maybe &= findPtrRoot(Phi->getIncomingValue(i), Visited, CurRoot, L);
+    // return Maybe;
+  }
+  case Instruction::Select: {
+    // if (SE->isLoopInvariant(SE->getSCEV(V), L))
+      return setRoot(V, CurRoot);
+    // SelectInst *SI = cast<SelectInst>(V);
+    // return findPtrRoot(SI->getTrueValue(), Visited, CurRoot, L)
+    //   && findPtrRoot(SI->getFalseValue(), Visited, CurRoot, L);
+  }
+  default:;
+  }
+
+  assert(0);
+  return false;
+}
+
+struct RangeInfo {
+  uint64_t Cost;
+  bool TagAssigned;
+};
+
+void SoftBoundCETSPass::runOnLoop(Loop *L, LoopInfo *LI,
+                                  DenseMap<Loop *, bool> &MTELoopInfo) {
+  MTELoopInfo[L] = false;
+
+  for (auto *BB : L->blocks()) {
+    if (LI->getLoopFor(BB) != L) {
+      // This BB belongs to a subloop
+      if (MTELoopInfo.count(L)) {
+        // We already have info for this loop
+        if (MTELoopInfo[L]) {
+          MTELoopInfo[L] = true;
+          return;
+        }
+      } else {
+        runOnLoop(LI->getLoopFor(BB), LI, MTELoopInfo);
+      }
+    } else {
+      // This BB does not belong to a subloop
+      for (auto &I : BB->getInstList()) {
+        if (isa<CallInst>(&I) || isa<InvokeInst>(&I)) {
+          MTELoopInfo[L] = true;
+          return;
+        }
+      }
+    }
+  }
+
+  return;
+}
+
+void SoftBoundCETSPass::prepareMTEAssignment(Function *func_ptr) {
+  LoopInfo *LI = &getAnalysis<LoopInfoWrapperPass>(*func_ptr).getLoopInfo();
+  DenseMap<Loop *, bool> MTELoopInfo;
+
+  // Find if loop has call instructions
+  for (auto I = LI->begin(), E = LI->end(); I != E; I++)
+    runOnLoop(*I, LI, MTELoopInfo);
+
+  BlockFrequencyInfo *BFI =
+    &(getAnalysis<BlockFrequencyInfoWrapperPass>(*func_ptr).getBFI());
+
+  RangeInfoMap.clear();
+
+  // Calculate costs.
+  for(Function::iterator bb_begin = func_ptr->begin(), bb_end = func_ptr->end();
+      bb_begin != bb_end; ++bb_begin) {
+    BasicBlock *BB = &*bb_begin;
+    Loop *L = LI->getLoopFor(BB);
+
+    // Ignore instructions outside a loop
+    if (!L)
+      continue;
+
+    assert(MTELoopInfo.count(L) && "MTELoopInfo not calculated??");
+    // pass if the loop has call instruction
+    if (MTELoopInfo[L])
+      continue;
+
+    for(BasicBlock::iterator i_begin = BB->begin(),
+          i_end = BB->end(); i_begin != i_end; ++i_begin) {
+
+      Instruction* insn = &*i_begin;
+      if (!isa<LoadInst>(insn) && !isa<StoreInst>(insn))
+        continue;
+
+      SmallPtrSet<Value *, 8> Visited;
+      Value *Root = 0;
+      findPtrRoot(insn, Visited, Root);
+
+      Loop *RootLoop;
+      if (isa<Argument>(Root) || isa<Constant>(Root)) {
+        RootLoop = NULL;
+      } else {
+        assert(isa<Instruction>(Root));
+        BasicBlock *RootBB = cast<Instruction>(Root)->getParent();
+        RootLoop = LI->getLoopFor(RootBB);
+
+        // Pointer is defined in the loop
+        if (RootLoop == L)
+          continue;
+      }
+
+      Loop *CurLoop = L;
+      while (Loop *ParLoop = L->getParentLoop()) {
+        // If the parent loop has call, cur loop is the range.
+        if (RootLoop == ParLoop || MTELoopInfo.count(ParLoop))
+          break;
+        CurLoop = ParLoop;
+      }
+
+      RangeInfoMap[Root][CurLoop].Cost += BFI->getBlockFreq(BB).getFrequency();
+    }
+  }
+}
+
+
+
 //
 // Method: getAssociateFuncLock()
 //
@@ -5272,9 +5450,10 @@ bool SoftBoundCETSPass::runOnModule(Module& module) {
     // instructions in the original program In this pass, the pointers
     // in the original program are also identified
     //
-      
     identifyOriginalInst(func_ptr);
       
+    prepareMTEAssignment(func_ptr);
+
     //
     // Iterate over all basic block and then each insn within a basic
     // block We make two passes over the IR for base and bound
