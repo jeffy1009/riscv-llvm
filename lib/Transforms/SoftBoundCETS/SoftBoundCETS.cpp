@@ -225,8 +225,6 @@ unsafe_byval_opt
 char SoftBoundCETSPass:: ID = 0;
 
 //diwony
-//static RegisterPass<SoftBoundCETSPass> P ("SoftBoundCETSPass",
-//                                          "SoftBound Pass for Spatial Safety");
 
 ///////////////////////////////
 // MTE related
@@ -314,11 +312,12 @@ void SoftBoundCETSPass::runOnLoop(Loop *L, LoopInfo *LI,
   MTELoopInfo[L] = false;
 
   for (auto *BB : L->blocks()) {
-    if (LI->getLoopFor(BB) != L) {
+    Loop* subLoop = LI->getLoopFor(BB);
+    if (subLoop != L) {
       // This BB belongs to a subloop
-      if (MTELoopInfo.count(L)) {
-        // We already have info for this loop
-        if (MTELoopInfo[L]) {
+      if (MTELoopInfo.count(subLoop)) {
+        // We already have info for this subloop
+        if (MTELoopInfo[subLoop]) {
           MTELoopInfo[L] = true;
           return;
         }
@@ -5497,4 +5496,6 @@ bool SoftBoundCETSPass::runOnModule(Module& module) {
 static const char lv_name[] = "SoftBoundCETSPass";
 INITIALIZE_PASS_BEGIN(SoftBoundCETSPass, LV_NAME, lv_name, false, false)
 INITIALIZE_PASS_DEPENDENCY(DominatorTreeWrapperPass)
+INITIALIZE_PASS_DEPENDENCY(LoopInfoWrapperPass)
+INITIALIZE_PASS_DEPENDENCY(BlockFrequencyInfoWrapperPass)
 INITIALIZE_PASS_END(SoftBoundCETSPass, LV_NAME, lv_name, false, false)
