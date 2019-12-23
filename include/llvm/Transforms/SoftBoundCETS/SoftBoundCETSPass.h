@@ -267,6 +267,11 @@ class SoftBoundCETSPass: public ModulePass {
   bool m_is_64_bit;
 
   /* MTE related data structures */
+  struct RangeInfo {
+  uint64_t Cost;
+  bool TagAssigned;
+};
+
   DenseMap<Value *, DenseMap<Loop *, RangeInfo> > RangeInfoMap;
 
   /* Main functions implementing the structure of the Softboundcets
