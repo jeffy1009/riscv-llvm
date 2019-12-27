@@ -42,6 +42,7 @@
 //===---------------------------------------------------------------------===//
 
 #include "llvm/Transforms/SoftBoundCETS/SoftBoundCETSPass.h"
+#include "llvm/IR/IntrinsicInst.h"
 #include <llvm/mte/metadata.h>
 
 cl::opt<bool>
@@ -302,11 +303,6 @@ bool SoftBoundCETSPass::findPtrRoot(Value *V, SmallPtrSet<Value *, 8> &Visited,
   return false;
 }
 
-struct RangeInfo {
-  uint64_t Cost;
-  bool TagAssigned;
-};
-
 void SoftBoundCETSPass::runOnLoop(Loop *L, LoopInfo *LI,
                                   DenseMap<Loop *, bool> &MTELoopInfo) {
   MTELoopInfo[L] = false;
@@ -328,7 +324,8 @@ void SoftBoundCETSPass::runOnLoop(Loop *L, LoopInfo *LI,
     else {
       // This BB does not belong to a subloop
       for (auto &I : BB->getInstList()) {
-        if (isa<CallInst>(&I) || isa<InvokeInst>(&I)) {
+        if ((isa<CallInst>(&I) || isa<InvokeInst>(&I))
+            && !isa<IntrinsicInst>(&I)) {
           MTELoopInfo[L] = true;
           break;
         }
@@ -351,7 +348,20 @@ void SoftBoundCETSPass::PrintDenseMap(DenseMap<Loop *, bool> &MTELoopInfo){
   return;
 }
 
+void SoftBoundCETSPass::PrintRangeInfo() {
+  for (auto I : RangeInfoMap) {
+    for (auto II : I.second) {
+      std::cout << "Cost: " << II.second.Cost << ", Value : " << I.first << ", Loop : " <<  II.first
+                << ", TagAssigned: " << II.second.TagAssigned
+                << ", ColoringDone: " << II.second.ColoringDone << '\n';
+    }
+  }
+
+  return;
+}
+
 void SoftBoundCETSPass::prepareMTEAssignment(Function *func_ptr) {
+  errs() << "parepareMTEAssignment function : " << func_ptr->getName() << '\n';
   LoopInfo *LI = &getAnalysis<LoopInfoWrapperPass>(*func_ptr).getLoopInfo();
   DenseMap<Loop *, bool> MTELoopInfo;
   BlockFrequencyInfo *BFI =
@@ -523,6 +533,11 @@ SoftBoundCETSPass:: getAssociatedFuncLock(Value* PointerInst){
 void SoftBoundCETSPass::initializeSoftBoundVariables(Module& module) {
 
   if(spatial_safety){
+    m_mte_color_tag =
+      module.getFunction("mte_color_tag");
+    assert(m_mte_color_tag &&
+           "m_mte_color_tag function type null?");
+
     m_spatial_load_dereference_check =
       module.getFunction("__softboundcets_spatial_load_dereference_check");
     assert(m_spatial_load_dereference_check &&
@@ -1399,6 +1414,9 @@ void SoftBoundCETSPass::addStoreBaseBoundFunc(Value* pointer_dest,
                                               Value* pointer,
                                               Value* size_of_type,
                                               Instruction* insert_at) {
+#if 1 // jsshin MTE
+  return;
+#endif
 
   Value* pointer_base_cast = NULL;
   Value* pointer_bound_cast = NULL;
@@ -3174,6 +3192,59 @@ SoftBoundCETSPass::addLoadStoreChecks(Instruction* load_store,
     } // BOUNDSCHECKOPT ends
   }
 
+#if 1
+  SmallPtrSet<Value *, 8> Visited;
+  Value *Root = 0;
+  findPtrRoot(pointer_operand, Visited, Root);
+
+  BasicBlock *BB = load_store->getParent();
+  if (RangeInfoMap.count(Root)) {
+    for (auto &I : RangeInfoMap[Root]) {
+      Loop *L = I.first;
+      if (I.second.TagAssigned) {
+        // Tag assigned for this loop: do not need to bound check
+        if (L->contains(BB)) {
+          mte_bound_check_eliminated++;
+          // if (load_store->getFunction()->getName().equals("longest_match")
+          //     && (Root->stripPointerCasts()->getName().equals("window")
+          //         || Root->stripPointerCasts()->getName().equals("prev")))
+          //   continue;
+#if 0
+          if (!I.second.ColoringDone) {
+            Value* tmp_base = NULL;
+            Value* tmp_bound = NULL;
+
+            Constant* given_constant = dyn_cast<Constant>(Root);
+            if(given_constant ) {
+              if(GLOBALCONSTANTOPT)
+                return;
+
+              getConstantExprBaseBound(given_constant, tmp_base, tmp_bound);
+            }
+            else {
+              tmp_base = getAssociatedBase(Root);
+              tmp_bound = getAssociatedBound(Root);
+            }
+
+            Instruction *InsertPos = L->getLoopPreheader()->getTerminator();
+            Value* bitcast_base = castToVoidPtr(tmp_base, InsertPos);
+            args.push_back(bitcast_base);
+
+            Value* bitcast_bound = castToVoidPtr(tmp_bound, InsertPos);
+            args.push_back(bitcast_bound);
+
+            CallInst::Create(m_mte_color_tag, args, "", InsertPos);
+
+            I.second.ColoringDone = true;
+          }
+#endif
+          // return;
+        }
+      }
+    }
+  }
+#endif
+
   Value* tmp_base = NULL;
   Value* tmp_bound = NULL;
 
@@ -3212,6 +3283,7 @@ SoftBoundCETSPass::addLoadStoreChecks(Instruction* load_store,
     CallInst::Create(m_spatial_store_dereference_check, args, "", load_store);
   }
 
+  total_bound_check++;
   return;
 }
 
@@ -3706,7 +3778,6 @@ void SoftBoundCETSPass::addDereferenceChecks(Function* func) {
 #if 1
   // spatial check optimizations here
 
-  m_dominator_tree = &getAnalysis<DominatorTreeWrapperPass>(*func).getDomTree();
 
 
   for(std::vector<Instruction*>::iterator i = CheckWorkList.begin(),
@@ -5459,6 +5530,10 @@ bool SoftBoundCETSPass::runOnModule(Module& module) {
     ((llvm::Function*)nullptr)->viewCFGOnly();
     return false;
   }
+
+  mte_bound_check_eliminated=0;
+  total_bound_check=0;
+
   spatial_safety = true;
   temporal_safety = false; // gykim spatial
 
@@ -5515,6 +5590,7 @@ bool SoftBoundCETSPass::runOnModule(Module& module) {
     // instructions in the original program In this pass, the pointers
     // in the original program are also identified
     //
+    m_dominator_tree = &getAnalysis<DominatorTreeWrapperPass>(*func_ptr).getDomTree();
     identifyOriginalInst(func_ptr);
 
     prepareMTEAssignment(func_ptr);
@@ -5539,6 +5615,10 @@ bool SoftBoundCETSPass::runOnModule(Module& module) {
 
   renameFunctions(module);
   DEBUG(errs()<<"Done with SoftBoundCETSPass\n");
+
+
+  errs() << "total bound check cnt: " << total_bound_check << '\n';
+  errs() << "mte eliminated cnt: " << mte_bound_check_eliminated << '\n';
 
   /* print the external functions not wrapped */
 

@@ -147,6 +147,7 @@ class SoftBoundCETSPass: public ModulePass {
   Function* m_shadow_stack_key_store;
   Function* m_shadow_stack_lock_store;
 
+  Function* m_mte_color_tag;
   Function* m_spatial_load_dereference_check;
   Function* m_spatial_store_dereference_check;
 
@@ -268,11 +269,15 @@ class SoftBoundCETSPass: public ModulePass {
 
   /* MTE related data structures */
   struct RangeInfo {
-  uint64_t Cost;
-  bool TagAssigned;
-};
+    uint64_t Cost;
+    bool TagAssigned;
+    bool ColoringDone;
+  };
 
   DenseMap<Value *, DenseMap<Loop *, RangeInfo> > RangeInfoMap;
+
+  int mte_bound_check_eliminated;
+  int total_bound_check;
 
   /* Main functions implementing the structure of the Softboundcets
      pass
@@ -281,6 +286,7 @@ class SoftBoundCETSPass: public ModulePass {
   void runOnLoop(Loop *L, LoopInfo *LI,
                  DenseMap<Loop *, bool> &MTELoopInfo);
   void PrintDenseMap(DenseMap<Loop *, bool> &MTELoopInfo);
+  void PrintRangeInfo();
   void prepareMTEAssignment(Function*);
   void initializeSoftBoundVariables(Module&);
   void identifyOriginalInst(Function*);

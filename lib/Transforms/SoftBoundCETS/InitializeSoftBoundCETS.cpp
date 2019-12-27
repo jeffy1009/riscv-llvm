@@ -249,6 +249,10 @@ void InitializeSoftBoundCETS:: constructCheckHandlers(Module & module){
   Type* void_ptr_ty = PointerType::getUnqual(Type::getInt8Ty(module.getContext()));
   Type* size_ty = Type::getInt64Ty(module.getContext());
 
+  module.getOrInsertFunction("mte_color_tag",
+                             void_ty, void_ptr_ty, void_ptr_ty,
+                             NULL);
+
   module.getOrInsertFunction("__softboundcets_spatial_load_dereference_check",
                              void_ty, void_ptr_ty, void_ptr_ty,
                              void_ptr_ty, size_ty, NULL);

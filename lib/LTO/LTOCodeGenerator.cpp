@@ -526,7 +526,7 @@ bool LTOCodeGenerator::optimize(bool DisableVerify, bool DisableInline,
 
 
   if (OptSOFTBOUND){
-    passes.add(createCFGSimplificationPass());
+    passes.add(createLoopSimplifyPass());
     passes.add(new FixByValAttributesPass());
     passes.add(new InitializeSoftBoundCETS());
     passes.add(new SoftBoundCETSPass());
