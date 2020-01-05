@@ -4664,7 +4664,8 @@ void SoftBoundCETSPass::handleIntToPtr(IntToPtrInst* inttoptrinst) {
   Value* inst = inttoptrinst;
 
   if(spatial_safety){
-    associateBaseBound(inst, m_void_null_ptr, m_void_null_ptr);
+    //FIXME
+    associateBaseBound(inst, m_void_null_ptr, m_infinite_bound_ptr);
   }
 
   if(temporal_safety){
