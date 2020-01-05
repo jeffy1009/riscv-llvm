@@ -3751,6 +3751,8 @@ void SoftBoundCETSPass::addDereferenceChecks(Function* func) {
   if(Blacklist->isIn(F))
     return;
   */
+  if(func->getName()=="Perl_sv_vcatpvfn")
+    return;
   std::vector<Instruction*> CheckWorkList;
   std::map<Value*, bool> ElideSpatialCheck;
   std::map<Value*, bool> ElideTemporalCheck;
@@ -5224,6 +5226,32 @@ void SoftBoundCETSPass::insertMetadataLoad(LoadInst* load_inst){
     args.push_back(lock_alloca);
   }
 
+
+
+  if(pointer_operand->getName()=="stdout" || pointer_operand->getName()=="stdin" || pointer_operand->getName()=="input_stream"){
+    associateBaseBound(load_inst_value, m_void_null_ptr, m_infinite_bound_ptr);
+    return;
+  }
+
+
+  if(PointerType *PTy = dyn_cast<PointerType>(load_inst->getType())){
+    if (StructType *ST = dyn_cast<StructType>(PTy->getElementType())) {
+      if(ST->getName()=="struct._IO_FILE"){
+        associateBaseBound(load_inst_value, m_void_null_ptr, m_infinite_bound_ptr);
+        return;
+      }
+    }
+  }
+
+  if(isa<CallInst>(pointer_operand)){
+    CallInst *CI=dyn_cast<CallInst>(pointer_operand);
+    if(const Function *F=CI->getCalledFunction()){
+      if(F->getName()=="__ctype_b_loc"){
+        associateBaseBound(load_inst_value, m_void_null_ptr, m_infinite_bound_ptr);
+        return;
+      }
+    }
+  }
   CallInst::Create(m_load_base_bound_func, args, "", insert_at);
 
   if(spatial_safety){
@@ -5570,7 +5598,7 @@ bool SoftBoundCETSPass::runOnModule(Module& module) {
   identifyFuncToTrans(module);
 
   identifyInitialGlobals(module);
-  addBaseBoundGlobals(module);
+  //addBaseBoundGlobals(module);
 
   for(Module::iterator ff_begin = module.begin(), ff_end = module.end();
       ff_begin != ff_end; ++ff_begin){

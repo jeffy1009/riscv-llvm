@@ -227,7 +227,8 @@ namespace llvm{
 				if (GV.getName() == "llvm.global_ctors" ||
 					GV.getName() == "llvm.global_dtors" ||
 					GV.getName() == "llvm.global.annotations" ||
-					GV.getName() == "llvm.used") {
+                                        GV.getName() == "llvm.used" ||
+                                        GV.getName() == "llvm.compiler.used"){
 					continue;
 				}
                                 if (ISINTERESTINGTYPE(GV.getName().str().c_str())){
@@ -249,6 +250,8 @@ namespace llvm{
                                         TypeSanLogger.incTrackedGlobal();
 					string allocName = "global:" + GV->getName().str();
 					TypeUtil.insertUpdateMetalloc(SrcM, BuilderGlobal, GV, GV->getValueType(), 3, 1, ConstantInt::get(Int64Ty, DL->getTypeAllocSize(GV->getValueType())), allocName);
+                                        GV->setAlignment(8);
+
 			}
 
 			BuilderGlobal.CreateRetVoid();
