@@ -250,8 +250,7 @@ namespace llvm{
                                         TypeSanLogger.incTrackedGlobal();
 					string allocName = "global:" + GV->getName().str();
 					TypeUtil.insertUpdateMetalloc(SrcM, BuilderGlobal, GV, GV->getValueType(), 3, 1, ConstantInt::get(Int64Ty, DL->getTypeAllocSize(GV->getValueType())), allocName);
-                                        GV->setAlignment(8);
-
+                                        GV->setAlignment(16);
 			}
 
 			BuilderGlobal.CreateRetVoid();
