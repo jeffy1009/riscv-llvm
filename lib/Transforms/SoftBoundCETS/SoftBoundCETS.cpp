@@ -161,7 +161,7 @@ static cl::opt<bool>
 GLOBALCONSTANTOPT
 ("softboundcets_global_const_opt",
  cl::desc("global constant expressions are not checked"),
- cl::init(false));
+ cl::init(true));
 
 static cl::opt<bool>
 CALLCHECKS
@@ -209,7 +209,14 @@ static cl::opt<bool>
 DISABLE_MEMCOPY_METADATA_COPIES
 ("softboundcets_disable_memcpy_metadata_copies",
  cl::desc("disable metadata copies with memcopy"),
- cl::init(false));
+ cl::init(true)); // jsshin
+
+static cl::opt<bool>
+ENABLE_MTE
+("enable_mte",
+ cl::desc("enable mte"),
+ cl::init(false)); // jsshin
+
 
 #if 0
 static cl::opt<bool>
@@ -225,257 +232,153 @@ unsafe_byval_opt
 #define DEBUG_TYPE LV_NAME
 char SoftBoundCETSPass:: ID = 0;
 
-//diwony
+// Assign nearest debug info. LLVM will sometimes complain if we don't do this.
+static void setNearestDbgLoc(Instruction *Inst, Instruction *InstDL, bool Upward=false) {
+  if (Upward) {
+    BasicBlock *BB = InstDL->getParent();
+    while(1) {
+      while ((InstDL != BB->begin()) && !InstDL->getDebugLoc())
+        InstDL = InstDL->getPrevNode();
+      if (InstDL == BB->begin()) {
+        if (InstDL->getDebugLoc())
+          break;
+        BB = BB->getPrevNode();
+        InstDL = BB->getTerminator();
+      } else {
+        break;
+      }
+    }
+  } else {
+    BasicBlock *BB = InstDL->getParent();
+    while(1) {
+      while (InstDL && !InstDL->getDebugLoc()) InstDL = InstDL->getNextNode();
+      if (!InstDL) {
+        BB = BB->getNextNode();
+        InstDL = &*BB->begin();
+      } else {
+        break;
+      }
+    }
+  }
+  Inst->setDebugLoc(InstDL->getDebugLoc());
+}
 
 ///////////////////////////////
 // MTE related
 ///////////////////////////////
 
-static bool setRoot(Value *V, Value *&CurRoot) {
-  if (!CurRoot) {
-    CurRoot = V;
-    return true;
+// Returns "Root" for the given pointer.
+// If the result is incomplete (due to PHIs), NULL is returned.
+// Candidate roots are stored in CandRoots
+Value *SoftBoundCETSPass::findPtrRoot(Value *V, SmallPtrSetImpl<Value *> &Visited,
+                                      SmallPtrSetImpl<Value *> &CandRoots, bool FirstPHI) {
+  if (PtrRootMap.count(V)) {
+    CandRoots.insert(PtrRootMap[V]);
+    return PtrRootMap[V];
   }
 
-  if (CurRoot==V)
-    return true;
+  // to prevent infinite loop due to phi nodes
+  if (!Visited.insert(V).second) {
+    assert(isa<PHINode>(V) || isa<GetElementPtrInst>(V) || isa<SelectInst>(V));
+    CandRoots.insert(V);
+    return NULL;
+  }
 
-  return false;
-}
+  Value *Ret = NULL;
+  if (isa<Argument>(V)) {
+    Ret = V;
+    goto end;
+  }
 
-bool SoftBoundCETSPass::findPtrRoot(Value *V, SmallPtrSet<Value *, 8> &Visited,
-                                    Value *&CurRoot) {
-  if (!Visited.insert(V).second)
-    return true;
-
-  if (isa<Argument>(V))
-    return setRoot(V, CurRoot);
-
-  if (isa<Constant>(V))
-    return setRoot(V, CurRoot);
+  if (isa<Constant>(V)) {
+    if (isa<ConstantExpr>(V)) {
+      assert(cast<ConstantExpr>(V)->getOpcode()==Instruction::GetElementPtr);
+      Ret = cast<User>(V)->getOperand(0);
+    } else {
+      Ret = V;
+    }
+    assert(isa<GlobalVariable>(Ret) || isa<ConstantPointerNull>(Ret));
+    goto end;
+  }
 
   switch (cast<Instruction>(V)->getOpcode()) {
   case Instruction::Alloca:
-    return setRoot(V, CurRoot);
   case Instruction::Call:
   case Instruction::ExtractValue: // TODO
   case Instruction::Invoke:
-  case Instruction::IntToPtr: // TODO
-  case Instruction::Load:
-    // if (SE->isLoopInvariant(SE->getSCEV(V), L))
-      return setRoot(V, CurRoot);
-    // else
-    //   return false;
-  case Instruction::PtrToInt:
-    return findPtrRoot(cast<User>(V)->getOperand(0), Visited, CurRoot);
+  case Instruction::IntToPtr: { // TODO
+    Ret = V;
+    goto end;
+  }
+  case Instruction::Load: {
+    assert(!AA->pointsToConstantMemory(cast<LoadInst>(V)->getOperand(0)));
+    Ret = V;
+    goto end;
+  }
+  case Instruction::PtrToInt: {
+    Ret = findPtrRoot(cast<User>(V)->getOperand(0), Visited, CandRoots, FirstPHI);
+    goto end;
+  }
   case Instruction::BitCast: {
-    // if (SE->isLoopInvariant(SE->getSCEV(V), L))
-    //   return setRoot(V, CurRoot);
-    return findPtrRoot(cast<BitCastInst>(V)->stripPointerCasts(), Visited,
-                       CurRoot);
+    Ret = findPtrRoot(cast<BitCastInst>(V)->stripPointerCasts(), Visited, CandRoots, FirstPHI);
+    goto end;
   }
   case Instruction::GetElementPtr: {
-    // if (SE->isLoopInvariant(SE->getSCEV(V), L))
-    //   return setRoot(V, CurRoot);
-    return findPtrRoot(cast<GetElementPtrInst>(V)->getPointerOperand(), Visited,
-                       CurRoot);
+    Ret = findPtrRoot(cast<GetElementPtrInst>(V)->getPointerOperand(), Visited, CandRoots, FirstPHI);
+    goto end;
   }
   case Instruction::PHI: {
-    // if (SE->isLoopInvariant(SE->getSCEV(V), L))
-      return setRoot(V, CurRoot);
-    // PHINode *Phi = cast<PHINode>(V);
-    // bool Maybe = true;
-    // for (unsigned i = 0, e = Phi->getNumIncomingValues(); i != e; i++)
-    //   Maybe &= findPtrRoot(Phi->getIncomingValue(i), Visited, CurRoot, L);
-    // return Maybe;
-  }
-  case Instruction::Select: {
-    // if (SE->isLoopInvariant(SE->getSCEV(V), L))
-      return setRoot(V, CurRoot);
-    // SelectInst *SI = cast<SelectInst>(V);
-    // return findPtrRoot(SI->getTrueValue(), Visited, CurRoot, L)
-    //   && findPtrRoot(SI->getFalseValue(), Visited, CurRoot, L);
-  }
-  default:;
-  }
+    PHINode *Phi = cast<PHINode>(V);
+    for (unsigned i = 0, e = Phi->getNumIncomingValues(); i != e; i++)
+      findPtrRoot(Phi->getIncomingValue(i), Visited, CandRoots, false);
 
-  assert(0);
-  return false;
-}
+    if (!FirstPHI)
+      goto end;
 
-void SoftBoundCETSPass::runOnLoop(Loop *L, LoopInfo *LI,
-                                  DenseMap<Loop *, bool> &MTELoopInfo) {
-  MTELoopInfo[L] = false;
-
-  for (auto *BB : L->blocks()) {
-    Loop* subLoop = LI->getLoopFor(BB);
-    if (subLoop != L) {
-      // This BB belongs to a subloop
-      if (MTELoopInfo.count(subLoop)) {
-        // We already have info for this subloop
-        if (MTELoopInfo[subLoop]) {
-          MTELoopInfo[L] = true;
-        }
-      }
-      else {
-        runOnLoop(LI->getLoopFor(BB), LI, MTELoopInfo);
-      }
-    }
-    else {
-      // This BB does not belong to a subloop
-      for (auto &I : BB->getInstList()) {
-        if ((isa<CallInst>(&I) || isa<InvokeInst>(&I))
-            && !isa<IntrinsicInst>(&I)) {
-          MTELoopInfo[L] = true;
-          break;
-        }
-      } // Inst loop ends
-    }
-  } // BB loop ends
-
-
-  return;
-}
-
-void SoftBoundCETSPass::PrintDenseMap(DenseMap<Loop *, bool> &MTELoopInfo){
-
-  DenseMap<Loop *, bool>::iterator iter;
-  for (iter = MTELoopInfo.begin(); iter != MTELoopInfo.end(); iter++)
-    std::cout << "Loop: " << iter->first << ", Call?: " << iter->second << " ";
-
-  std::cout << std::endl;
-
-  return;
-}
-
-void SoftBoundCETSPass::PrintRangeInfo() {
-  for (auto I : RangeInfoMap) {
-    for (auto II : I.second) {
-      std::cout << "Cost: " << II.second.Cost << ", Value : " << I.first << ", Loop : " <<  II.first
-                << ", TagAssigned: " << II.second.TagAssigned
-                << ", ColoringDone: " << II.second.ColoringDone << '\n';
-    }
-  }
-
-  return;
-}
-
-void SoftBoundCETSPass::prepareMTEAssignment(Function *func_ptr) {
-  errs() << "parepareMTEAssignment function : " << func_ptr->getName() << '\n';
-  LoopInfo *LI = &getAnalysis<LoopInfoWrapperPass>(*func_ptr).getLoopInfo();
-  DenseMap<Loop *, bool> MTELoopInfo;
-  BlockFrequencyInfo *BFI =
-    &(getAnalysis<BlockFrequencyInfoWrapperPass>(*func_ptr).getBFI());
-  Value* pointer_operand = NULL;
-
-
-  // Find if loop has call instructions
-  for (auto I = LI->begin(), E = LI->end(); I != E; I++)
-    runOnLoop(*I, LI, MTELoopInfo);
-
-
-  RangeInfoMap.clear();
-
-  // Calculate costs.
-  for(Function::iterator bb_begin = func_ptr->begin(), bb_end = func_ptr->end();
-      bb_begin != bb_end; ++bb_begin) {
-    BasicBlock *BB = &*bb_begin;
-    Loop *L = LI->getLoopFor(BB);
-
-    // Ignore instructions outside a loop
-    if (!L)
-      continue;
-
-    assert(MTELoopInfo.count(L) && "MTELoopInfo not calculated??");
-    // pass if the loop has call instruction
-    if (MTELoopInfo[L])
-      continue;
-
-    for(BasicBlock::iterator i_begin = BB->begin(),
-          i_end = BB->end(); i_begin != i_end; ++i_begin) {
-
-      Instruction* insn = &*i_begin;
-      if (!isa<LoadInst>(insn) && !isa<StoreInst>(insn))
+    for (Value *T : CandRoots) {
+      if (((isa<PHINode>(T) || isa<SelectInst>(T)) && !PtrRootMap.count(T))
+          || isa<GetElementPtrInst>(T)
+          || isa<ConstantPointerNull>(T))
         continue;
 
-      if(isa<LoadInst>(insn)){
-        LoadInst* ldi = dyn_cast<LoadInst>(insn);
-        assert(ldi && "not a load instruction");
-        pointer_operand = ldi->getPointerOperand();
-      }
-
-      if(isa<StoreInst>(insn)){
-        StoreInst* sti = dyn_cast<StoreInst>(i_begin);
-        assert(sti && "not a store instruction");
-        pointer_operand = sti->getOperand(1);
-
-      }
-
-      assert(pointer_operand && "pointer operand null?");
-
-      SmallPtrSet<Value *, 8> Visited;
-      Value *Root = 0;
-      findPtrRoot(pointer_operand, Visited, Root);
-
-      Loop *RootLoop;
-      if (isa<Argument>(Root) || isa<Constant>(Root)) {
-        RootLoop = NULL;
-      } else {
-        assert(isa<Instruction>(Root));
-        BasicBlock *RootBB = cast<Instruction>(Root)->getParent();
-        RootLoop = LI->getLoopFor(RootBB);
-
-        // Pointer is defined in the loop
-        if (RootLoop == L)
-          continue;
-      }
-
-      Loop *CurLoop = L;
-      while (Loop *ParLoop = L->getParentLoop()) {
-        // If the parent loop has call, cur loop is the range.
-        if (RootLoop == ParLoop || MTELoopInfo.count(ParLoop))
-          break;
-        CurLoop = ParLoop;
-      }
-
-      RangeInfoMap[Root][CurLoop].Cost += BFI->getBlockFreq(BB).getFrequency();
-    }
-  }
-
-  // Sort according to the cost (descending order)
-  std::multimap<uint64_t, std::pair<Value *, Loop *>, std::greater<uint64_t> > RangeInfoSorted;
-  for (auto I : RangeInfoMap)
-    for (auto II : I.second)
-      RangeInfoSorted.insert(std::pair<uint64_t,
-                            std::pair<Value *, Loop *> >(II.second.Cost,
-                                                         std::pair<Value *, Loop *>(I.first, II.first)));
-
-  // Assign Tags
-  // initialize data structure for 16 tags
-  SmallVector<SmallPtrSet<Loop *, 4>, 16> TagStatus(16);
-  for (auto I : RangeInfoSorted) {
-    for (int i = 0; i < 16; i++) {
-      Loop *ThisRange = I.second.second;
-      bool CanAssign = true;
-      for (auto II : TagStatus[i]) {
-        Loop *Occupied = &*II;
-        if (ThisRange->contains(Occupied) || Occupied->contains(ThisRange)) {
-          CanAssign = false;
-          break;
-        }
-      }
-
-      if (CanAssign) {
-        Value *Root = I.second.first;
-        TagStatus[i].insert(ThisRange);
-        RangeInfoMap[Root][ThisRange].TagAssigned = true;
+      if (!Ret) {
+        Ret = T;
+      } else if (T != Ret) {
+        Ret = V;
         break;
       }
     }
+    goto end;
   }
+  case Instruction::Select: {
+    SelectInst *SI = cast<SelectInst>(V);
+    Value *TV = findPtrRoot(SI->getTrueValue(), Visited, CandRoots, FirstPHI);
+    Value *FV = findPtrRoot(SI->getFalseValue(), Visited, CandRoots, FirstPHI);
+    if (!TV || !FV) {
+      if (TV) CandRoots.insert(TV);
+      if (FV) CandRoots.insert(FV);
+    } else if (TV == FV) {
+      Ret = TV;
+    } else {
+      assert(!isa<ConstantPointerNull>(TV) || !isa<ConstantPointerNull>(FV));
+      if (isa<ConstantPointerNull>(TV)) Ret = FV;
+      else if (isa<ConstantPointerNull>(FV)) Ret = TV;
+      else Ret = V;
+    }
+    goto end;
+  }
+  default:;
+    assert(0);
+  }
+
+ end:
+  Visited.erase(V);
+  if (Ret) {
+    PtrRootMap[V] = Ret;
+    CandRoots.insert(Ret);
+  }
+  return Ret;
 }
-
-
 
 //
 // Method: getAssociateFuncLock()
@@ -533,10 +436,25 @@ SoftBoundCETSPass:: getAssociatedFuncLock(Value* PointerInst){
 void SoftBoundCETSPass::initializeSoftBoundVariables(Module& module) {
 
   if(spatial_safety){
+    m_mte_inc_lru =
+      module.getFunction("mte_inc_lru");
+    assert(m_mte_inc_lru &&
+           "m_mte_inc_lru function type null?");
+
     m_mte_color_tag =
       module.getFunction("mte_color_tag");
     assert(m_mte_color_tag &&
            "m_mte_color_tag function type null?");
+
+    m_mte_uncolor_tag =
+      module.getFunction("mte_uncolor_tag");
+    assert(m_mte_uncolor_tag &&
+           "m_mte_uncolor_tag function type null?");
+
+    m_mte_restore_tag =
+      module.getFunction("mte_restore_tag");
+    assert(m_mte_restore_tag &&
+           "m_mte_restore_tag function type null?");
 
     m_spatial_load_dereference_check =
       module.getFunction("__softboundcets_spatial_load_dereference_check");
@@ -1169,6 +1087,7 @@ bool SoftBoundCETSPass::isFuncDefSoftBound(const std::string &str) {
     m_func_def_softbound["__softboundcets_trie_allocate"] = true;
     m_func_def_softbound["__shrinkBounds"] = true;
     m_func_def_softbound["__softboundcets_memcopy_check"] = true;
+    m_func_def_softbound["__softboundcets_memset_check"] = true;
 
     m_func_def_softbound["__softboundcets_spatial_load_dereference_check"] = true;
 
@@ -1867,7 +1786,7 @@ void SoftBoundCETSPass:: introduceShadowStackAllocation(InvokeInst* call_inst){
 
     SmallVector<Value*, 8> args;
     args.push_back(total_ptr_args);
-    CallInst::Create(m_shadow_stack_allocate, args, "", call_inst);
+    setNearestDbgLoc(CallInst::Create(m_shadow_stack_allocate, args, "", call_inst), call_inst);
 }
 
 void SoftBoundCETSPass:: introduceShadowStackAllocation(CallInst* call_inst){
@@ -1883,7 +1802,7 @@ void SoftBoundCETSPass:: introduceShadowStackAllocation(CallInst* call_inst){
 
   SmallVector<Value*, 8> args;
   args.push_back(total_ptr_args);
-  CallInst::Create(m_shadow_stack_allocate, args, "", call_inst);
+  setNearestDbgLoc(CallInst::Create(m_shadow_stack_allocate, args, "", call_inst), call_inst);
 }
 
 //
@@ -1916,12 +1835,12 @@ SoftBoundCETSPass::introduceShadowStackStores(Value* ptr_value,
     SmallVector<Value*, 8> args;
     args.push_back(ptr_base_cast);
     args.push_back(argno_value);
-    CallInst::Create(m_shadow_stack_base_store, args, "", insert_at);
+    setNearestDbgLoc(CallInst::Create(m_shadow_stack_base_store, args, "", insert_at),insert_at);
 
     args.clear();
     args.push_back(ptr_bound_cast);
     args.push_back(argno_value);
-    CallInst::Create(m_shadow_stack_bound_store, args, "", insert_at);
+    setNearestDbgLoc(CallInst::Create(m_shadow_stack_bound_store, args, "", insert_at),insert_at);
   }
 
   if(temporal_safety){
@@ -1933,12 +1852,12 @@ SoftBoundCETSPass::introduceShadowStackStores(Value* ptr_value,
     args.clear();
     args.push_back(ptr_key);
     args.push_back(argno_value);
-    CallInst::Create(m_shadow_stack_key_store, args, "", insert_at);
+    setNearestDbgLoc(CallInst::Create(m_shadow_stack_key_store, args, "", insert_at),insert_at);
 
     args.clear();
     args.push_back(ptr_lock);
     args.push_back(argno_value);
-    CallInst::Create(m_shadow_stack_lock_store, args, "", insert_at);
+    setNearestDbgLoc(CallInst::Create(m_shadow_stack_lock_store, args, "", insert_at),insert_at);
   }
 }
 
@@ -1958,7 +1877,7 @@ SoftBoundCETSPass:: introduceShadowStackDeallocation(InvokeInst* call_inst,
   if(pointer_args_return == 0)
     return;
   SmallVector<Value*, 8> args;
-  CallInst::Create(m_shadow_stack_deallocate, args, "", insert_at);
+  setNearestDbgLoc(CallInst::Create(m_shadow_stack_deallocate, args, "", insert_at),insert_at);
 }
 
 void
@@ -1969,7 +1888,8 @@ SoftBoundCETSPass:: introduceShadowStackDeallocation(CallInst* call_inst,
   if(pointer_args_return == 0)
     return;
   SmallVector<Value*, 8> args;
-  CallInst::Create(m_shadow_stack_deallocate, args, "", insert_at);
+  setNearestDbgLoc(CallInst::Create(m_shadow_stack_deallocate, args, "", insert_at),insert_at);
+
 }
 
 //
@@ -2059,10 +1979,12 @@ SoftBoundCETSPass::introduceShadowStackLoads(Value* ptr_value,
     args.push_back(argno_value);
     Value* base = CallInst::Create(m_shadow_stack_base_load, args, "",
                                    insert_at);
+    setNearestDbgLoc((CallInst*)base, insert_at);
     args.clear();
     args.push_back(argno_value);
     Value* bound = CallInst::Create(m_shadow_stack_bound_load, args, "",
                                     insert_at);
+    setNearestDbgLoc((CallInst*)bound, insert_at);
     associateBaseBound(ptr_value, base, bound);
   }
 
@@ -2070,11 +1992,13 @@ SoftBoundCETSPass::introduceShadowStackLoads(Value* ptr_value,
     args.clear();
     args.push_back(argno_value);
     Value* key = CallInst::Create(m_shadow_stack_key_load, args, "", insert_at);
+    setNearestDbgLoc((CallInst*)key, insert_at);
 
     args.clear();
     args.push_back(argno_value);
     Value* lock = CallInst::Create(m_shadow_stack_lock_load, args, "",
                                    insert_at);
+    setNearestDbgLoc((CallInst*)lock, insert_at);
     associateKeyLock(ptr_value, key, lock);
   }
 }
@@ -2911,7 +2835,7 @@ void SoftBoundCETSPass::addMemcopyMemsetCheck(CallInst* call_inst,
 
     }
 
-    CallInst::Create(m_memcopy_check, args, "", call_inst);
+    setNearestDbgLoc(CallInst::Create(m_memcopy_check, args, "", call_inst), call_inst);
     return;
   }
 
@@ -2949,7 +2873,7 @@ void SoftBoundCETSPass::addMemcopyMemsetCheck(CallInst* call_inst,
       args.push_back(dest_key);
       args.push_back(dest_lock);
     }
-    CallInst::Create(m_memset_check, args, "", call_inst);
+    setNearestDbgLoc(CallInst::Create(m_memset_check, args, "", call_inst), call_inst);
 
     return;
   }
@@ -3076,8 +3000,8 @@ createFaultBlock (Function * F) {
   LLVMContext & Context = F->getContext();
   Module * M = F->getParent();
 
-  M->getOrInsertFunction("__softboundcets_dummy", Type::getVoidTy(Context), NULL);
-  CallInst::Create(M->getFunction("__softboundcets_dummy"), "", UI);
+  // M->getOrInsertFunction("__softboundcets_dummy", Type::getVoidTy(Context), NULL);
+  // CallInst::Create(M->getFunction("__softboundcets_dummy"), "", UI);
 
   M->getOrInsertFunction ("__softboundcets_abort", Type::getVoidTy (Context), NULL);
   CallInst::Create (M->getFunction ("__softboundcets_abort"), "", UI);
@@ -3277,10 +3201,12 @@ SoftBoundCETSPass::addLoadStoreChecks(Instruction* load_store,
 
   if(isa<LoadInst>(load_store)){
 
-    CallInst::Create(m_spatial_load_dereference_check, args, "", load_store);
+    setNearestDbgLoc(CallInst::Create(m_spatial_load_dereference_check, args, "", load_store),
+                     load_store);
   }
   else{
-    CallInst::Create(m_spatial_store_dereference_check, args, "", load_store);
+    setNearestDbgLoc(CallInst::Create(m_spatial_store_dereference_check, args, "", load_store),
+                     load_store);
   }
 
   total_bound_check++;
@@ -5553,8 +5479,305 @@ void SoftBoundCETSPass::identifyOriginalInst (Function * func) {
   }/* Function ends */
 }
 
-bool SoftBoundCETSPass::runOnModule(Module& module) {
+void SoftBoundCETSPass::buildMTECallGraph(Function *F, SmallVectorImpl<Function *> &Stack) {
+  auto It = std::find(Stack.begin(), Stack.end(), F);
+  if (It != Stack.end()) {
+    MTECGNode *CGN;
+    if (FuncCGNodeMap.count(F)) {
+      CGN = FuncCGNodeMap[F];
+    } else {
+      CGN = new MTECGNode;
+      CGN->isRecursive = true;
+    }
 
+    while (It != Stack.end()) {
+      FuncCGNodeMap[*It] = CGN;
+      CGN->Functions.insert(*It);
+      ++It;
+    }
+
+    return;
+  }
+
+  Stack.push_back(F);
+  for (auto &I : F->getBasicBlockList()) {
+    BasicBlock *BB = &I;
+    for (auto &II : BB->getInstList()) {
+      Instruction *Inst = &II;
+      assert(!isa<InvokeInst>(Inst) && "C++ not supported yet!");
+      CallInst *CI = dyn_cast<CallInst>(Inst);
+      if (!CI)
+        continue;
+
+      if (CI->isInlineAsm())
+        continue;
+
+      Function *Callee = CI->getCalledFunction();
+      if (!Callee) {
+        assert(cast<Function>(CI->getCalledValue()->stripPointerCasts())->isDeclaration());
+        continue;
+      }
+
+      if (checkIfFunctionOfInterest(Callee))
+        buildMTECallGraph(Callee, Stack);
+    }
+  }
+  Stack.pop_back();
+  if (!FuncCGNodeMap.count(F)) {
+    MTECGNode *CGN = new MTECGNode;
+    FuncCGNodeMap[F] = CGN;
+    CGN->Functions.insert(F);
+  }
+}
+
+void SoftBoundCETSPass::analyzePtrRoots(Function *F) {
+  for (auto &I : F->getBasicBlockList()) {
+    BasicBlock *BB = &I;
+
+    for (auto &II : BB->getInstList()) {
+      Instruction* insn = &II;
+      if (CallInst *CI = dyn_cast<CallInst>(insn)) {
+        if (CI->isInlineAsm())
+          continue;
+
+        Function *Callee = CI->getCalledFunction();
+        if (!Callee) {
+          assert(cast<Function>(CI->getCalledValue()->stripPointerCasts())->isDeclaration());
+          continue;
+        }
+
+        if (!checkIfFunctionOfInterest(Callee))
+          continue;
+
+        for (Value *Arg : CI->arg_operands()) {
+          if (!Arg->getType()->isPointerTy())
+            continue;
+
+          SmallPtrSet<Value *, 16> Visited;
+          SmallPtrSet<Value *, 16> DummyCandRoots;
+          findPtrRoot(Arg, Visited, DummyCandRoots, true);
+        }
+      }
+
+      if (!isa<LoadInst>(insn) && !isa<StoreInst>(insn))
+        continue;
+
+      Value* pointer_operand;
+      if (LoadInst* ldi = dyn_cast<LoadInst>(insn))
+        pointer_operand = ldi->getPointerOperand();
+
+      if (StoreInst* sti = dyn_cast<StoreInst>(insn))
+        pointer_operand = sti->getOperand(1);
+
+      if(GLOBALCONSTANTOPT && isa<Constant>(pointer_operand))
+        continue;
+
+      SmallPtrSet<Value *, 16> Visited;
+      SmallPtrSet<Value *, 16> DummyCandRoots;
+      findPtrRoot(pointer_operand, Visited, DummyCandRoots, true);
+    }
+  }
+}
+
+void SoftBoundCETSPass::saveBlockFreq(Function *F) {
+  for (auto &I : F->getBasicBlockList()) {
+    BasicBlock *BB = &I;
+    BlockFreq[BB] = BFI->getBlockFreq(BB).getFrequency() / (double)BFI->getEntryFreq();
+  }
+}
+
+void SoftBoundCETSPass::printFuncMTEInfo(FuncMTEInfoTy &FuncMTEInfo) {
+  MTEInfoSortedTy MTEInfoSorted;
+  for (auto I : FuncMTEInfo)
+    MTEInfoSorted.insert(std::pair<double, MTEInfo>(I.second.Cost, I.second));
+
+  printMTEInfoSorted(MTEInfoSorted);
+}
+
+void SoftBoundCETSPass::printMTEInfoSorted(MTEInfoSortedTy &MTEInfoSorted) {
+  for (auto I : MTEInfoSorted) {
+    Value *V = I.second.Root;
+    V->dump();
+    dbgs() << "Cost: " << I.first;
+    if (I.second.isGlobalPtr) dbgs() << " GlobalPtr";
+    dbgs() << '\n';
+  }
+}
+
+bool SoftBoundCETSPass::findRange(Value *Root, BasicBlock *BB, Loop *&Range) {
+  Loop *L = LI->getLoopFor(BB);
+  Loop *RootLoop;
+  if (isa<Argument>(Root) || isa<Constant>(Root)) {
+    RootLoop = NULL;
+    Range = NULL;
+    return true;
+  } else {
+    // skip if access is not in the loop, and the definition is not global
+    // or argument
+    if (!L)
+      return false;
+
+    assert(isa<Instruction>(Root));
+    BasicBlock *RootBB = cast<Instruction>(Root)->getParent();
+    RootLoop = LI->getLoopFor(RootBB);
+
+    // RootLoop does not always contain BB. see huft_build of gzip
+    while (RootLoop && !RootLoop->contains(BB))
+      RootLoop = RootLoop->getParentLoop();
+
+    // Pointer is defined in the loop
+    if (RootLoop == L)
+      return false;
+  }
+
+  Loop *CurLoop = L;
+  if (CurLoop) {
+    while (Loop *ParLoop = CurLoop->getParentLoop()) {
+      if (RootLoop == ParLoop)
+        break;
+
+      CurLoop = ParLoop;
+    }
+  }
+
+  // CurLoop = NULL means Root = argument or global
+  Range = CurLoop;
+  return true;
+}
+
+void SoftBoundCETSPass::calculateMTECostForFunc(Function *F) {
+  // Functions not in the call graph. e.g) interrupt handling function
+  if (!FuncCGNodeMap.count(F))
+    return;
+
+  FuncMTEInfoTy &FuncMTEInfo = ModuleMTEInfo[FuncCGNodeMap[F]];
+  for (auto &I : F->getBasicBlockList()) {
+    BasicBlock *BB = &I;
+    for (auto &II : BB->getInstList()) {
+      Instruction* insn = &II;
+      if (!isa<LoadInst>(insn) && !isa<StoreInst>(insn))
+        continue;
+
+      Value* pointer_operand;
+      if (LoadInst* ldi = dyn_cast<LoadInst>(insn))
+        pointer_operand = ldi->getPointerOperand();
+
+      if (StoreInst* sti = dyn_cast<StoreInst>(insn))
+        pointer_operand = sti->getOperand(1);
+
+      if(GLOBALCONSTANTOPT && isa<Constant>(pointer_operand))
+        continue;
+
+      assert(PtrRootMap.count(pointer_operand));
+      Value *Root = PtrRootMap[pointer_operand];
+
+      Loop *Range;
+      if (!findRange(Root, BB, Range))
+        continue;
+
+      assert(BlockFreq.count(BB));
+      if (LoadInst *LI = dyn_cast<LoadInst>(Root)) {
+        Value *GlobalPtr = LI->getPointerOperand();
+        if (isa<GlobalVariable>(GlobalPtr)) {
+          FuncMTEInfoTy &FuncGlobalPtrInfo = ModuleGlobalPtrInfo[FuncCGNodeMap[F]];
+          if (!FuncGlobalPtrInfo.count(GlobalPtr)) {
+            FuncGlobalPtrInfo[GlobalPtr].Root = GlobalPtr;
+            FuncGlobalPtrInfo[GlobalPtr].isGlobalPtr = true;
+          }
+          FuncGlobalPtrInfo[GlobalPtr].Cost += BlockFreq[BB];
+          continue;
+        }
+      }
+
+      if (!FuncMTEInfo.count(Root))
+        FuncMTEInfo[Root].Root = Root;
+      FuncMTEInfo[Root].Cost += BlockFreq[BB];
+    }
+  }
+}
+
+void SoftBoundCETSPass::calculateFinalMTECost(MTECGNode *N) {
+  for (auto *F : N->Functions) {
+    for (auto &I : F->getBasicBlockList()) {
+      BasicBlock *BB = &I;
+      for (auto &II : BB->getInstList()) {
+        Instruction *Inst = &II;
+        CallInst *CI = dyn_cast<CallInst>(Inst);
+        if (!CI)
+          continue;
+
+        if (CI->isInlineAsm())
+          continue;
+
+        Function *Callee = CI->getCalledFunction();
+        if (!Callee) {
+          assert(cast<Function>(CI->getCalledValue()->stripPointerCasts())->isDeclaration());
+          continue;
+        }
+
+        if (!checkIfFunctionOfInterest(Callee))
+          continue;
+
+        assert(FuncCGNodeMap.count(Callee));
+        MTECGNode *CalleeN = FuncCGNodeMap[Callee];
+
+        // Avoid infinite loop due to recursive func
+        if (CalleeN == N)
+          continue;
+
+        if (!MTECostAvailable.count(CalleeN))
+          calculateFinalMTECost(CalleeN);
+
+        FuncMTEInfoTy &FuncMTEInfo = ModuleMTEInfo[FuncCGNodeMap[F]];
+        FuncMTEInfoTy &CalleeMTEInfo = ModuleMTEInfo[CalleeN];
+        for (auto R : CalleeMTEInfo) {
+          Value *Root = R.first;
+          if (isa<Argument>(Root) && !CalleeN->isRecursive) { // TODO: handle recursive functions
+            int i = 0;
+            for (Argument &Arg : Callee->args()) {
+              if (&Arg == Root)
+                break;
+              i++;
+            }
+
+            Value *ActualArg = CI->getArgOperand(i);
+            assert(PtrRootMap.count(ActualArg));
+            Value *ActualRoot = PtrRootMap[ActualArg];
+            if (!FuncMTEInfo.count(ActualRoot))
+              FuncMTEInfo[ActualRoot].Root = ActualRoot;
+            FuncMTEInfo[ActualRoot].Cost += CalleeMTEInfo[Root].Cost * BlockFreq[BB];
+            RootArgMap[ActualRoot].insert(cast<Argument>(Root));
+            continue;
+          }
+
+          if (isa<Constant>(Root)) {
+            if (!FuncMTEInfo.count(Root))
+              FuncMTEInfo[Root].Root = Root;
+            assert(BlockFreq.count(BB));
+            FuncMTEInfo[Root].Cost += CalleeMTEInfo[Root].Cost * BlockFreq[BB];
+            continue;
+          }
+        }
+
+        FuncMTEInfoTy &FuncGlobalPtrInfo = ModuleGlobalPtrInfo[FuncCGNodeMap[F]];
+        FuncMTEInfoTy &CalleeGlobalPtrInfo = ModuleGlobalPtrInfo[CalleeN];
+        for (auto R : CalleeGlobalPtrInfo) {
+          Value *GlobalPtr = R.first;
+
+          if (!FuncGlobalPtrInfo.count(GlobalPtr)) {
+            FuncGlobalPtrInfo[GlobalPtr].Root = GlobalPtr;
+            FuncGlobalPtrInfo[GlobalPtr].isGlobalPtr = true;
+          }
+          FuncGlobalPtrInfo[GlobalPtr].Cost += CalleeGlobalPtrInfo[GlobalPtr].Cost * BlockFreq[BB];
+        }
+      }
+    }
+  }
+
+  MTECostAvailable.insert(N);
+}
+
+bool SoftBoundCETSPass::runOnModule(Module& module) {
   if (std::getenv("bar") == (char*) -1) {
     ((llvm::Function*)nullptr)->viewCFGOnly();
     return false;
@@ -5601,6 +5824,90 @@ bool SoftBoundCETSPass::runOnModule(Module& module) {
   identifyInitialGlobals(module);
   //addBaseBoundGlobals(module);
 
+  if (ENABLE_MTE) {
+    ///////////////////////////////
+    // MTE Analysis
+    ///////////////////////////////
+
+    Function *MainFunc = module.getFunction("softboundcets_pseudo_main");
+    assert(MainFunc && "No main in this module?");
+    SmallVector<Function *, 16> CallStack;
+    buildMTECallGraph(MainFunc, CallStack);
+
+    for (auto &I : module.functions()) {
+      Function *F = &I;
+      if (!checkIfFunctionOfInterest(F))
+        continue;
+
+      LI = &getAnalysis<LoopInfoWrapperPass>(*F).getLoopInfo();
+      BFI = &getAnalysis<BlockFrequencyInfoWrapperPass>(*F).getBFI();
+      AA = &getAnalysis<AAResultsWrapperPass>(*F).getAAResults();
+
+      analyzePtrRoots(F);
+      saveBlockFreq(F);
+      calculateMTECostForFunc(F);
+    }
+
+    MTECGNode *MainFuncCGN = FuncCGNodeMap[MainFunc];
+    calculateFinalMTECost(MainFuncCGN);
+
+    // Sort according to the cost (descending order)
+    MTEInfoSortedTy MTEInfoSorted;
+    for (auto CGNI : FuncCGNodeMap)
+      for (auto I : ModuleMTEInfo[CGNI.second])
+        if (!isa<Constant>(I.first) && I.second.Cost > MTE_THRESHOLD)
+          MTEInfoSorted.insert(std::pair<double, MTEInfo>(I.second.Cost, I.second));
+
+    for (auto I : ModuleMTEInfo[FuncCGNodeMap[MainFunc]])
+      if (isa<Constant>(I.first) && I.second.Cost > MTE_THRESHOLD)
+        MTEInfoSorted.insert(std::pair<double, MTEInfo>(I.second.Cost, I.second));
+
+    for (auto I : ModuleGlobalPtrInfo[FuncCGNodeMap[MainFunc]])
+      if (I.second.Cost > MTE_THRESHOLD)
+        MTEInfoSorted.insert(std::pair<double, MTEInfo>(I.second.Cost, I.second));
+
+    // Assign Tags
+    // initialize data structure for NUM_TAGS tags
+    // const int NUM_TAGS = 15;
+    // const int NUM_TAGS = 3;
+    // SmallVector<SmallPtrSet<Loop *, 4>, 16> TagStatus(NUM_TAGS);
+    const int NUM_TAGGED_OBJS = 15;
+    int i = 0;
+    FuncMTEInfoTy &MainFuncMTEInfo = ModuleMTEInfo[FuncCGNodeMap[MainFunc]];
+    FuncMTEInfoTy &MainFuncGlobalPtrInfo = ModuleGlobalPtrInfo[FuncCGNodeMap[MainFunc]];
+    for (auto I : MTEInfoSorted) {
+      if (i++ < NUM_TAGGED_OBJS) {
+        Value *Root = I.second.Root;
+        if (I.second.isGlobalPtr) {
+          MainFuncGlobalPtrInfo[Root].TagAssigned = true;
+          continue;
+        }
+
+        if (isa<Constant>(Root))
+          MainFuncMTEInfo[Root].TagAssigned = true;
+
+        if (Argument *Arg = dyn_cast<Argument>(Root))
+          ModuleMTEInfo[FuncCGNodeMap[Arg->getParent()]][Arg].TagAssigned = true;
+
+        if (Instruction *Inst = dyn_cast<Instruction>(Root))
+          ModuleMTEInfo[FuncCGNodeMap[Inst->getFunction()]][Inst].TagAssigned = true;
+
+        SmallVector<Value *, 8> WorkList;
+        WorkList.push_back(Root);
+        while (!WorkList.empty()) {
+          Value *Entry = WorkList.pop_back_val();
+          if (!RootArgMap.count(Entry))
+            continue;
+
+          for (Argument *Arg : RootArgMap[Entry]) {
+            ModuleMTEInfo[FuncCGNodeMap[Arg->getParent()]][Arg].TagAssigned = true;
+            WorkList.push_back(Arg);
+          }
+        }
+      }
+    }
+  }
+
   for(Module::iterator ff_begin = module.begin(), ff_end = module.end();
       ff_begin != ff_end; ++ff_begin){
     Function* func_ptr = dyn_cast<Function>(ff_begin);
@@ -5614,15 +5921,17 @@ bool SoftBoundCETSPass::runOnModule(Module& module) {
     if (!checkIfFunctionOfInterest(func_ptr)) {
       continue;
     }
+
+    m_dominator_tree = &getAnalysis<DominatorTreeWrapperPass>(*func_ptr).getDomTree();
+    LI = &getAnalysis<LoopInfoWrapperPass>(*func_ptr).getLoopInfo();
+    AA = &getAnalysis<AAResultsWrapperPass>(*func_ptr).getAAResults();
+
     //
     // Iterating over the instructions in the function to identify IR
     // instructions in the original program In this pass, the pointers
     // in the original program are also identified
     //
-    m_dominator_tree = &getAnalysis<DominatorTreeWrapperPass>(*func_ptr).getDomTree();
     identifyOriginalInst(func_ptr);
-
-    prepareMTEAssignment(func_ptr);
 
     //
     // Iterate over all basic block and then each insn within a basic
@@ -5639,6 +5948,19 @@ bool SoftBoundCETSPass::runOnModule(Module& module) {
     gatherBaseBoundPass1(func_ptr);
     gatherBaseBoundPass2(func_ptr);
     addDereferenceChecks(func_ptr);
+    if (ENABLE_MTE) {
+      for (auto &I : func_ptr->getBasicBlockList()) {
+        BasicBlock *BB = &I;
+        bool RetBB = false;
+        for (auto &II : BB->getInstList())
+          if (isa<ReturnInst>(II))
+            RetBB = true;
+
+        if (RetBB)
+          setNearestDbgLoc(CallInst::Create(m_mte_restore_tag, {}, "", BB->getTerminator()),
+                           BB->getTerminator(), true);
+      }
+    }
   }
 
 
@@ -5673,4 +5995,6 @@ INITIALIZE_PASS_BEGIN(SoftBoundCETSPass, LV_NAME, lv_name, false, false)
 INITIALIZE_PASS_DEPENDENCY(DominatorTreeWrapperPass)
 INITIALIZE_PASS_DEPENDENCY(LoopInfoWrapperPass)
 INITIALIZE_PASS_DEPENDENCY(BlockFrequencyInfoWrapperPass)
+INITIALIZE_PASS_DEPENDENCY(ScalarEvolutionWrapperPass)
+INITIALIZE_PASS_DEPENDENCY(AAResultsWrapperPass)
 INITIALIZE_PASS_END(SoftBoundCETSPass, LV_NAME, lv_name, false, false)

@@ -40,7 +40,7 @@ static char const *METADATAFUNCS[] = {  "metaset_1", "metaset_2", "metaset_4", "
                                         "metaget_base_1", "metaget_base_2", "metaget_base_4", "metaget_base_8", "metaget_base_16",
                                         "metaget_base_deep_8", "metaget_base_deep_16", "metaget_base_deep_32",
                                         "metacheck_1", "metacheck_2", "metacheck_4", "metacheck_8", "metacheck_16",
-                                        "initialize_global_metadata", "initialize_metadata", "unsafe_stack_free_meta",  "meta_report_stats", "__metastack_init", "_ZL18unsafe_stack_allocmm", "unsafe_stack_alloc_meta", "unsafe_stack_setup", "_ZL18unsafe_stack_setupPvmm", "_ZL23unsafe_stack_alloc_metaPvm", "argvcopy", "strarrcopy", "_ZL22shared_object_callbackP12dl_phdr_infomPv", "__metaglobal_init"};
+                                        "initialize_global_metadata", "initialize_metadata", "unsafe_stack_free_meta",  "meta_report_stats", "__metastack_init", "_ZL18unsafe_stack_allocmm", "unsafe_stack_alloc_meta", "unsafe_stack_setup", "_ZL18unsafe_stack_setupPvmm", "_ZL23unsafe_stack_alloc_metaPvm", "argvcopy", "strarrcopy", "_ZL22shared_object_callbackP12dl_phdr_infomPv", "__metaglobal_init", "mte_color_tag", "mte_inc_lru", "mte_restore_tag"};
 
 
 static char const *TYPESANFUNCS[] = {"metalloc_init_globals", "metalloc_widememset"};

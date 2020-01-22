@@ -90,6 +90,7 @@
 #include "llvm/Analysis/AliasAnalysis.h"
 #include "llvm/Analysis/BlockFrequencyInfo.h"
 #include "llvm/Analysis/LoopInfo.h"
+#include "llvm/Analysis/ScalarEvolution.h"
 #include "llvm/IR/CallSite.h"
 #include "llvm/IR/CFG.h"
 #include "llvm/ADT/StringExtras.h"
@@ -126,6 +127,10 @@ class SoftBoundCETSPass: public ModulePass {
  private:
   const DataLayout *TD;
   const TargetLibraryInfo *TLI;
+  AliasAnalysis *AA;
+  LoopInfo *LI;
+  BlockFrequencyInfo *BFI;
+
   BuilderTy *Builder;
   SmallString<64> BlacklistFile;
   std::unique_ptr<SpecialCaseList> Blacklist;
@@ -147,7 +152,10 @@ class SoftBoundCETSPass: public ModulePass {
   Function* m_shadow_stack_key_store;
   Function* m_shadow_stack_lock_store;
 
+  Function* m_mte_inc_lru;
   Function* m_mte_color_tag;
+  Function* m_mte_uncolor_tag;
+  Function* m_mte_restore_tag;
   Function* m_spatial_load_dereference_check;
   Function* m_spatial_store_dereference_check;
 
@@ -268,13 +276,31 @@ class SoftBoundCETSPass: public ModulePass {
   bool m_is_64_bit;
 
   /* MTE related data structures */
-  struct RangeInfo {
-    uint64_t Cost;
+  struct MTEInfo {
+    Value *Root;
+    Loop *Range;
+    double Cost;
     bool TagAssigned;
     bool ColoringDone;
+    bool isGlobalPtr;
   };
 
-  DenseMap<Value *, DenseMap<Loop *, RangeInfo> > RangeInfoMap;
+  struct MTECGNode {
+    SmallPtrSet<Function *, 4> Functions;
+    bool isRecursive;
+  };
+
+  DenseMap<Function *, MTECGNode *> FuncCGNodeMap;
+  DenseMap<Value *, Value *> PtrRootMap;
+  DenseMap<BasicBlock *, double> BlockFreq;
+  DenseMap<Value *, SmallPtrSet<Argument *, 8> > RootArgMap;
+
+  typedef DenseMap<Value *, MTEInfo > FuncMTEInfoTy;
+  typedef std::multimap<double, MTEInfo, std::greater<double> > MTEInfoSortedTy;
+  DenseMap<MTECGNode *, FuncMTEInfoTy>  ModuleMTEInfo;
+  DenseMap<MTECGNode *, FuncMTEInfoTy>  ModuleGlobalPtrInfo;
+
+  SmallPtrSet<MTECGNode *, 32> MTECostAvailable;
 
   int mte_bound_check_eliminated;
   int total_bound_check;
@@ -283,11 +309,16 @@ class SoftBoundCETSPass: public ModulePass {
      pass
    */
   bool runOnModule(Module&);
-  void runOnLoop(Loop *L, LoopInfo *LI,
-                 DenseMap<Loop *, bool> &MTELoopInfo);
-  void PrintDenseMap(DenseMap<Loop *, bool> &MTELoopInfo);
-  void PrintRangeInfo();
-  void prepareMTEAssignment(Function*);
+#if 1
+  void buildMTECallGraph(Function *F, SmallVectorImpl<Function *> &Stack);
+  void analyzePtrRoots(Function *F);
+  void saveBlockFreq(Function *F);
+  void printFuncMTEInfo(FuncMTEInfoTy &FuncMTEInfo);
+  void printMTEInfoSorted(MTEInfoSortedTy &MTEInfoSorted);
+  bool findRange(Value *Root, BasicBlock *BB, Loop *&Range);
+  void calculateMTECostForFunc(Function *F);
+  void calculateFinalMTECost(MTECGNode *N);
+#endif
   void initializeSoftBoundVariables(Module&);
   void identifyOriginalInst(Function*);
   bool isAllocaPresent(Function*);
@@ -350,7 +381,9 @@ class SoftBoundCETSPass: public ModulePass {
   void addLoadStoreChecks(Instruction*,
                           std::map<Value*, int>&);
   //diwony
-  bool findPtrRoot(Value *V, SmallPtrSet<Value *,8> &Visited, Value *&CurRoot);
+  Value *findPtrRoot(Value *V, SmallPtrSetImpl<Value *> &Visited,
+                     SmallPtrSetImpl<Value *> &CandRoots,
+                     bool FirstPHI);
   void addTemporalChecks(Instruction*,
                          std::map<Value*, int>&,
                          std::map<Value*, int>&);
@@ -528,6 +561,8 @@ class SoftBoundCETSPass: public ModulePass {
     au.addRequired<DominatorTreeWrapperPass>();
     au.addRequired<LoopInfoWrapperPass>();
     au.addRequired<BlockFrequencyInfoWrapperPass>();
+    au.addRequired<ScalarEvolutionWrapperPass>();
+    au.addRequired<AAResultsWrapperPass>();
     //au.addRequired<DataLayout>();
     //au.addRequired<TargetLibraryInfo>();
   }

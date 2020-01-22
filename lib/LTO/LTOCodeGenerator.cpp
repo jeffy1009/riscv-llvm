@@ -530,6 +530,9 @@ bool LTOCodeGenerator::optimize(bool DisableVerify, bool DisableInline,
     passes.add(new FixByValAttributesPass());
     passes.add(new InitializeSoftBoundCETS());
     passes.add(new SoftBoundCETSPass());
+    if (!DisableInline)
+      passes.add(createAlwaysInlinerPass());
+    passes.add(createVerifierPass());
   }
 
   if (OptTypeSan){
