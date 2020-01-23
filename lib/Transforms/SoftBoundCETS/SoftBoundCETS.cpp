@@ -217,6 +217,11 @@ ENABLE_MTE
  cl::desc("enable mte"),
  cl::init(false)); // jsshin
 
+static cl::opt<double>
+MTE_THRESHOLD
+("mte_threshold",
+ cl::desc("mte threshold"),
+ cl::init(1.0));
 
 #if 0
 static cl::opt<bool>
@@ -297,7 +302,8 @@ Value *SoftBoundCETSPass::findPtrRoot(Value *V, SmallPtrSetImpl<Value *> &Visite
     } else {
       Ret = V;
     }
-    assert(isa<GlobalVariable>(Ret) || isa<ConstantPointerNull>(Ret));
+    assert(isa<GlobalVariable>(Ret) || isa<ConstantPointerNull>(Ret)
+           || isa<UndefValue>(Ret));
     goto end;
   }
 
@@ -338,7 +344,8 @@ Value *SoftBoundCETSPass::findPtrRoot(Value *V, SmallPtrSetImpl<Value *> &Visite
     for (Value *T : CandRoots) {
       if (((isa<PHINode>(T) || isa<SelectInst>(T)) && !PtrRootMap.count(T))
           || isa<GetElementPtrInst>(T)
-          || isa<ConstantPointerNull>(T))
+          || isa<ConstantPointerNull>(T)
+          || isa<UndefValue>(T))
         continue;
 
       if (!Ret) {
@@ -3116,62 +3123,99 @@ SoftBoundCETSPass::addLoadStoreChecks(Instruction* load_store,
     } // BOUNDSCHECKOPT ends
   }
 
-#if 1
-  SmallPtrSet<Value *, 8> Visited;
-  Value *Root = 0;
-  findPtrRoot(pointer_operand, Visited, Root);
+  if(GLOBALCONSTANTOPT && isa<Constant>(pointer_operand))
+    return;
 
-  BasicBlock *BB = load_store->getParent();
-  if (RangeInfoMap.count(Root)) {
-    for (auto &I : RangeInfoMap[Root]) {
-      Loop *L = I.first;
-      if (I.second.TagAssigned) {
-        // Tag assigned for this loop: do not need to bound check
-        if (L->contains(BB)) {
-          mte_bound_check_eliminated++;
-          // if (load_store->getFunction()->getName().equals("longest_match")
-          //     && (Root->stripPointerCasts()->getName().equals("window")
-          //         || Root->stripPointerCasts()->getName().equals("prev")))
-          //   continue;
-#if 0
-          if (!I.second.ColoringDone) {
-            Value* tmp_base = NULL;
-            Value* tmp_bound = NULL;
+  if (ENABLE_MTE) {
+    assert(PtrRootMap.count(pointer_operand));
+    Value *Root = PtrRootMap[pointer_operand];
 
-            Constant* given_constant = dyn_cast<Constant>(Root);
-            if(given_constant ) {
-              if(GLOBALCONSTANTOPT)
-                return;
+    BasicBlock *BB = load_store->getParent();
+    #if 1
+    Function *F = load_store->getFunction();
+    Module *M = F->getParent();
+    assert(FuncCGNodeMap.count(F));
+    MTECGNode *CGN = FuncCGNodeMap[F];
+    assert(ModuleMTEInfo.count(CGN));
+    FuncMTEInfoTy &FuncMTEInfo = ModuleMTEInfo[CGN];
+    MTECGNode *MainCGN = FuncCGNodeMap[M->getFunction("softboundcets_pseudo_main")];
+    FuncMTEInfoTy &MainFuncMTEInfo = ModuleMTEInfo[MainCGN];
+    FuncMTEInfoTy &MainFuncGlobalPtrInfo = ModuleGlobalPtrInfo[MainCGN];
 
-              getConstantExprBaseBound(given_constant, tmp_base, tmp_bound);
-            }
-            else {
-              tmp_base = getAssociatedBase(Root);
-              tmp_bound = getAssociatedBound(Root);
-            }
-
-            Instruction *InsertPos = L->getLoopPreheader()->getTerminator();
-            Value* bitcast_base = castToVoidPtr(tmp_base, InsertPos);
-            args.push_back(bitcast_base);
-
-            Value* bitcast_bound = castToVoidPtr(tmp_bound, InsertPos);
-            args.push_back(bitcast_bound);
-
-            CallInst::Create(m_mte_color_tag, args, "", InsertPos);
-
-            I.second.ColoringDone = true;
-          }
-#endif
-          // return;
-        }
-      }
+    if ((isa<LoadInst>(Root) && isa<GlobalVariable>(cast<LoadInst>(Root)->getPointerOperand())
+            && MainFuncGlobalPtrInfo[cast<LoadInst>(Root)->getPointerOperand()].TagAssigned)) {
+      dbgs() << " ";
     }
-  }
+    if ((isa<Constant>(Root) && MainFuncMTEInfo.count(Root) && MainFuncMTEInfo[Root].TagAssigned)
+        || (!isa<Constant>(Root) && FuncMTEInfo.count(Root) && FuncMTEInfo[Root].TagAssigned)
+        || (isa<LoadInst>(Root) && isa<GlobalVariable>(cast<LoadInst>(Root)->getPointerOperand())
+            && MainFuncGlobalPtrInfo[cast<LoadInst>(Root)->getPointerOperand()].TagAssigned)) {
+      Loop *L = NULL;
+      if (!findRange(Root, BB, L))
+        goto cont;
+
+      mte_bound_check_eliminated++;
+      if (!FuncMTEInfo[Root].ColoringDone) {
+
+        Instruction *InsertPos;
+        if (L)
+          InsertPos = L->getLoopPreheader()->getTerminator();
+        else
+          InsertPos = F->getEntryBlock().getTerminator();
+
+        Value* tmp_base = NULL;
+        Value* tmp_bound = NULL;
+
+        if (Constant* given_constant = dyn_cast<Constant>(Root)) {
+          getConstantExprBaseBound(given_constant, tmp_base, tmp_bound);
+        } else {
+          tmp_base = getAssociatedBase(Root);
+          tmp_bound = getAssociatedBound(Root);
+        }
+#if 1
+        Value* bitcast_base = castToVoidPtr(tmp_base, InsertPos);
+        args.push_back(bitcast_base);
+
+        Value* bitcast_bound = castToVoidPtr(tmp_bound, InsertPos);
+        args.push_back(bitcast_bound);
+
+        setNearestDbgLoc(CallInst::Create(m_mte_color_tag, args, "", InsertPos), InsertPos);
+        args.clear();
+#endif
+#if 0
+        if (L) {
+          SmallVector<BasicBlock*, 8> ExitBlocks;
+          L->getExitBlocks(ExitBlocks);
+          std::sort(ExitBlocks.begin(), ExitBlocks.end());
+          ExitBlocks.erase(std::unique(ExitBlocks.begin(), ExitBlocks.end()), ExitBlocks.end());
+          for (auto I : ExitBlocks) {
+            InsertPos = &*I->getFirstInsertionPt();
+            CallInst::Create(m_mte_uncolor_tag, {}, "", InsertPos);
+          }
+        } else {
+          for (auto &I : F->getBasicBlockList()) {
+            BasicBlock *BB = &I;
+            bool RetBB = false;
+            for (auto &II : BB->getInstList())
+              if (isa<ReturnInst>(II))
+                RetBB = true;
+
+            if (RetBB)
+              CallInst::Create(m_mte_uncolor_tag, {}, "", BB->getTerminator());
+          }
+        }
 #endif
 
+        FuncMTEInfo[Root].ColoringDone = true;
+      }
+      return; //JSSHIN
+    }
+    #endif
+  }
+ cont:
   Value* tmp_base = NULL;
   Value* tmp_bound = NULL;
-
+     // return;//JSSHIN
   Constant* given_constant = dyn_cast<Constant>(pointer_operand);
   if(given_constant ) {
     if(GLOBALCONSTANTOPT)
