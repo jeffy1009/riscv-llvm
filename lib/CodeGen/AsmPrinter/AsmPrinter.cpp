@@ -928,7 +928,7 @@ void AsmPrinter::EmitFunctionBody() {
 
       switch (MI.getOpcode()) {
       case TargetOpcode::CFI_INSTRUCTION:
-        emitCFIInstruction(MI);
+        //emitCFIInstruction(MI);
         break;
 
       case TargetOpcode::LOCAL_ESCAPE:

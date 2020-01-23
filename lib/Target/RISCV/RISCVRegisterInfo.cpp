@@ -72,13 +72,13 @@ RISCVRegisterInfo::getReservedRegs(const MachineFunction &MF) const {
   Reserved.set(RISCV::zero);
   Reserved.set(RISCV::zero_64);
 
-  if (TFI->hasFP(MF)) {
+  // if (TFI->hasFP(MF)) {
     // fp is the frame pointer.  Reserve all aliases.
     Reserved.set(RISCV::fp);
     Reserved.set(RISCV::s0);
     Reserved.set(RISCV::fp_64);
     Reserved.set(RISCV::s0_64);
-  }
+  // }
 
   // sp is the stack pointer.  Reserve all aliases.
   Reserved.set(RISCV::sp);

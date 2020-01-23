@@ -76,7 +76,7 @@ bool RISCVFrameLowering::hasFP(const MachineFunction &MF) const {
   // both fp and s0. The same applies to s0_64 & fp_64.
   // Until this problem is solved, we just force compiler to use fp as the frame
   // pointer only.
-  return true;
+  return false;
   // const MachineFrameInfo *MFI = MF.getFrameInfo();
   // return MF.getTarget().Options.DisableFramePointerElim(MF) ||
   //     MFI->hasVarSizedObjects() || MFI->isFrameAddressTaken();
@@ -111,7 +111,7 @@ void RISCVFrameLowering::emitPrologue(MachineFunction &MF, MachineBasicBlock &MB
   uint64_t StackSize = MFI->getStackSize();
 
   // No need to allocate space on the stack.
-  if (StackSize == 0 && !MFI->adjustsStack()) return;
+  //if (StackSize == 0 && !MFI->adjustsStack()) return;
 
   MachineModuleInfo &MMI = MF.getMMI();
   const MCRegisterInfo *MRI = MMI.getContext().getRegisterInfo();

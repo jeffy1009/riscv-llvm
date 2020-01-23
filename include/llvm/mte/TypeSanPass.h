@@ -211,7 +211,7 @@ namespace llvm{
 			MetadataTy = ArrayType::get(Int64Ty, 2);                      
 
 			Function *FGlobal = Function::Create(VoidFTy, GlobalValue::InternalLinkage,
-					"__init_global_object" + M.getName(), SrcM);
+                                                             "__init_global_object"/* + M.getName()*/, SrcM);
 
 			FGlobal->setUnnamedAddr(true);
 			FGlobal->setLinkage(GlobalValue::InternalLinkage);

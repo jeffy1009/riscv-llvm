@@ -107,7 +107,7 @@ let isBranch = 1, isTerminator = 1, isBarrier = 1 in {
   def J  : InstJ<0b1100111, (outs), (ins jumptarget:$target), "j\t$target", 
           [(br bb:$target)]>, Requires<[IsRV32]>;
 }
-let isCall = 1, Defs = [ra, a0, a1, fa0, fa1, fa0_64, fa1_64] in { //after call return addr and values are defined
+let isCall = 1, Defs = [ra, v0, v1, fv0, fv1, fv0_64, fv1_64, gp] in { //after call return addr and values are defined
     def JAL: InstJ<0b1101111, (outs GR32:$ret), (ins pcrel32call:$target),
       "jal\t$ret, $target", 
           [(set GR32:$ret, (r_jal pcrel32call:$target))]>, Requires<[IsRV32]>;
@@ -115,7 +115,7 @@ let isCall = 1, Defs = [ra, a0, a1, fa0, fa1, fa0_64, fa1_64] in { //after call 
 
 //call psuedo ops
 let isCall = 1, isCodeGenOnly = 1, usesCustomInserter = 1,
-  Defs = [ra, a0, a1, fa0, fa1] in {
+  Defs = [ra, v0, v1, fv0, fv1] in {
   def CALL : Pseudo<(outs), (ins pcrel32call:$target),
                               [(r_call pcrel32call:$target)]>, Requires<[IsRV32]>;
   def CALLREG : Pseudo<(outs), (ins jalrmem:$target),
@@ -124,7 +124,7 @@ let isCall = 1, isCodeGenOnly = 1, usesCustomInserter = 1,
   //TODO: fix jalr and write test
   //TODO: JALR can be implemented at brind in llvm since brind is unconditional
   // JLEIDEL : possible fix in place; requires more testing
-let isCall = 1,  Defs = [ra, a0, a1, fa0, fa1, fa0_64, fa1_64] in { //after call return addr and values are defined
+let isCall = 1,  Defs = [ra, v0, v1, fv0, fv1, fv0_64, fv1_64] in { //after call return addr and values are defined
 
     def JALR: InstRISCV<4, (outs GR32:$ret), (ins jalrmem:$target), 
           "jalr\t$ret, $target", [(set GR32:$ret, (r_jal addr:$target))]>, Requires<[IsRV32]>{
@@ -317,7 +317,7 @@ def ADJCALLSTACKUP   : Pseudo<(outs), (ins i64imm:$amt1, i64imm:$amt2),
 
 //hardcoded JALR to be return
 let isReturn = 1, isTerminator = 1, isBarrier = 1, hasCtrlDep = 1,
-    isCodeGenOnly = 1, Defs = [a0, a1] in {
+    isCodeGenOnly = 1, Defs = [v0, v1] in {
   def RET : InstRISCV<4, (outs), (ins), "ret", 
           []>{
             field bits<32> Inst;

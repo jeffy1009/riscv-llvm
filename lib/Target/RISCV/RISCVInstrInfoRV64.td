@@ -108,7 +108,7 @@ let isBranch = 1, isTerminator = 1, isBarrier = 1 in {
   def J64  : InstJ<0b1100111, (outs), (ins jumptarget:$target), "j\t$target", 
           [(br bb:$target)]>, Requires<[IsRV64]>;
 }
-let isCall = 1, Defs = [ra_64, a0_64, a1_64, fa0, fa1, fa0_64, fa1_64] in {
+let isCall = 1, Defs = [ra_64, v0_64, v1_64, fv0, fv1, fv0_64, fv1_64] in {
     def JAL64: InstJ<0b1101111, (outs GR64:$ret), (ins pcrel64call:$target),
       "jal\t$ret, $target", 
           [(set GR64:$ret, (r_jal pcrel64call:$target))]>, Requires<[IsRV64]>;
@@ -116,14 +116,14 @@ let isCall = 1, Defs = [ra_64, a0_64, a1_64, fa0, fa1, fa0_64, fa1_64] in {
 
 //call psuedo ops
 let isCall = 1, isCodeGenOnly = 1, usesCustomInserter = 1,
-  Defs = [ra_64, a0_64, a1_64, fa0, fa1, fa0_64, fa1_64] in {
+  Defs = [ra_64, v0_64, v1_64, fv0, fv1, fv0_64, fv1_64] in {
   def CALL64 : Pseudo<(outs), (ins pcrel64call:$target),
                               [(r_call pcrel64call:$target)]>, Requires<[IsRV64]>;
   def CALLREG64 : Pseudo<(outs), (ins jalrmem64:$target),
                               [(r_call addr:$target)]>, Requires<[IsRV64]>;
 }
 
-let isCall = 1, Defs = [ra_64, a0_64, a1_64, fa0, fa1, fa0_64, fa1_64] in {
+let isCall = 1, Defs = [ra_64, v0_64, v1_64, fv0, fv1, fv0_64, fv1_64] in {
     def JALR64: InstRISCV<4, (outs GR64:$ret), (ins jalrmem64:$target),
           "jalr\t$ret, $target",
           [(set GR64:$ret, (r_jal addr:$target))]>, Requires<[IsRV64]>{
@@ -394,7 +394,7 @@ def FENCE64_I: InstRISCV<4, (outs), (ins fenceImm64:$pred, fenceImm64:$succ), "f
       }
 
 let isReturn = 1, isTerminator = 1, isBarrier = 1, hasCtrlDep = 1,
-    isCodeGenOnly = 1, Defs = [a0_64, a1_64] in {
+    isCodeGenOnly = 1, Defs = [v0_64, v1_64] in {
   def RET64 : InstRISCV<4, (outs), (ins), "ret", 
           []>, Requires<[IsRV64]>{
             field bits<32> Inst;
