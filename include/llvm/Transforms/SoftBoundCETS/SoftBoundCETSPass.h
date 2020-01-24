@@ -288,6 +288,7 @@ class SoftBoundCETSPass: public ModulePass {
   struct MTECGNode {
     SmallPtrSet<Function *, 4> Functions;
     bool isRecursive;
+    bool Done;
   };
 
   DenseMap<Function *, MTECGNode *> FuncCGNodeMap;

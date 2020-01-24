@@ -5563,7 +5563,8 @@ void SoftBoundCETSPass::buildMTECallGraph(Function *F, SmallVectorImpl<Function 
         continue;
       }
 
-      if (checkIfFunctionOfInterest(Callee))
+      if (checkIfFunctionOfInterest(Callee)
+          && (!FuncCGNodeMap.count(Callee) || !FuncCGNodeMap[Callee]->Done))
         buildMTECallGraph(Callee, Stack);
     }
   }
@@ -5573,6 +5574,7 @@ void SoftBoundCETSPass::buildMTECallGraph(Function *F, SmallVectorImpl<Function 
     FuncCGNodeMap[F] = CGN;
     CGN->Functions.insert(F);
   }
+  FuncCGNodeMap[F]->Done = true;
 }
 
 void SoftBoundCETSPass::analyzePtrRoots(Function *F) {
