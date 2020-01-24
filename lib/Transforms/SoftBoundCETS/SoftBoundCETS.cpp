@@ -5223,7 +5223,8 @@ void SoftBoundCETSPass::insertMetadataLoad(LoadInst* load_inst){
       }
     }
   }
-  CallInst::Create(m_load_base_bound_func, args, "", insert_at);
+  CallInst *call = CallInst::Create(m_load_base_bound_func, args, "", insert_at);
+  setNearestDbgLoc(call, insert_at);
 
   if(spatial_safety){
     Instruction* base_load = new LoadInst(base_alloca, "base.load", insert_at);
