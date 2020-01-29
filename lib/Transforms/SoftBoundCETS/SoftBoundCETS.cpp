@@ -259,6 +259,7 @@ static void setNearestDbgLoc(Instruction *Inst, Instruction *InstDL, bool Upward
       while (InstDL && !InstDL->getDebugLoc()) InstDL = InstDL->getNextNode();
       if (!InstDL) {
         BB = BB->getNextNode();
+        if (!BB) return; // End of the function.. give up
         InstDL = &*BB->begin();
       } else {
         break;
@@ -297,13 +298,17 @@ Value *SoftBoundCETSPass::findPtrRoot(Value *V, SmallPtrSetImpl<Value *> &Visite
 
   if (isa<Constant>(V)) {
     if (isa<ConstantExpr>(V)) {
-      assert(cast<ConstantExpr>(V)->getOpcode()==Instruction::GetElementPtr);
-      Ret = cast<User>(V)->getOperand(0);
+      if (cast<ConstantExpr>(V)->getOpcode()==Instruction::IntToPtr) {
+        Ret = V;
+      } else {
+        assert(cast<ConstantExpr>(V)->getOpcode()==Instruction::GetElementPtr);
+        Ret = cast<User>(V)->getOperand(0);
+      }
     } else {
       Ret = V;
     }
     assert(isa<GlobalVariable>(Ret) || isa<ConstantPointerNull>(Ret)
-           || isa<UndefValue>(Ret));
+           || isa<UndefValue>(Ret) || isa<ConstantExpr>(Ret));
     goto end;
   }
 
@@ -1369,7 +1374,7 @@ void SoftBoundCETSPass::addStoreBaseBoundFunc(Value* pointer_dest,
     args.push_back(pointer_key);
     args.push_back(pointer_lock);
   }
-  CallInst::Create(m_store_base_bound_func, args, "", insert_at);
+  setNearestDbgLoc(CallInst::Create(m_store_base_bound_func, args, "", insert_at), insert_at);
 }
 
 //
@@ -4406,7 +4411,7 @@ void SoftBoundCETSPass::handleMemcpy(CallInst* call_inst){
   args.push_back(arg3);
 
   if(arg3->getType() == Type::getInt64Ty(arg3->getContext())){
-    CallInst::Create(m_copy_metadata, args, "", call_inst);
+    setNearestDbgLoc(CallInst::Create(m_copy_metadata, args, "", call_inst), call_inst);
   }
   else{
     //    CallInst::Create(m_copy_metadata, args, "", call_inst);
@@ -5536,6 +5541,8 @@ void SoftBoundCETSPass::buildMTECallGraph(Function *F, SmallVectorImpl<Function 
     }
 
     while (It != Stack.end()) {
+      if (FuncCGNodeMap.count(*It))
+        assert(FuncCGNodeMap[*It] == CGN);
       FuncCGNodeMap[*It] = CGN;
       CGN->Functions.insert(*It);
       ++It;
