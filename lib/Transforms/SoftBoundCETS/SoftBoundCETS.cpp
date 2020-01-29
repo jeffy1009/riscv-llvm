@@ -209,7 +209,7 @@ static cl::opt<bool>
 DISABLE_MEMCOPY_METADATA_COPIES
 ("softboundcets_disable_memcpy_metadata_copies",
  cl::desc("disable metadata copies with memcopy"),
- cl::init(true)); // jsshin
+ cl::init(false)); // jsshin : SOFTBOUND_ORIG
 
 static cl::opt<bool>
 ENABLE_MTE
@@ -222,6 +222,12 @@ MTE_THRESHOLD
 ("mte_threshold",
  cl::desc("mte threshold"),
  cl::init(1.0));
+
+static cl::opt<bool>
+USE_METALLOC
+("use_metalloc",
+ cl::desc("use metalloc"),
+ cl::init(false)); // jsshin
 
 #if 0
 static cl::opt<bool>
@@ -1345,9 +1351,8 @@ void SoftBoundCETSPass::addStoreBaseBoundFunc(Value* pointer_dest,
                                               Value* pointer,
                                               Value* size_of_type,
                                               Instruction* insert_at) {
-#if 1 // jsshin MTE
-  return;
-#endif
+  if (USE_METALLOC) // jsshin SOFTBOUND_ORIG
+    return;
 
   Value* pointer_base_cast = NULL;
   Value* pointer_bound_cast = NULL;
@@ -4390,7 +4395,7 @@ void SoftBoundCETSPass::handleGEP(GetElementPtrInst* gep_inst) {
 void SoftBoundCETSPass::handleMemcpy(CallInst* call_inst){
 
 
-  if(DISABLE_MEMCOPY_METADATA_COPIES)
+  if(DISABLE_MEMCOPY_METADATA_COPIES || USE_METALLOC)
     return;
 
 
@@ -5179,8 +5184,10 @@ void SoftBoundCETSPass::insertMetadataLoad(LoadInst* load_inst){
   assert(first_inst_func && "function doesn't have any instruction and there is load???");
 
   /* address of pointer being pushed */
-  //args.push_back(pointer_operand_bitcast);
-  args.push_back(load_pointer_softbound);
+  if (!USE_METALLOC) // JSSHIN : SOFTBOUND_ORIG
+    args.push_back(pointer_operand_bitcast);
+  else
+    args.push_back(load_pointer_softbound);
 
   if(spatial_safety){
 
@@ -5876,7 +5883,8 @@ bool SoftBoundCETSPass::runOnModule(Module& module) {
   identifyFuncToTrans(module);
 
   identifyInitialGlobals(module);
-  //addBaseBoundGlobals(module);
+  if (!USE_METALLOC)
+    addBaseBoundGlobals(module); // SOFTBOUND_ORIG
 
   if (ENABLE_MTE) {
     ///////////////////////////////
