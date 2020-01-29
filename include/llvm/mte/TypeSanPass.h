@@ -37,6 +37,8 @@
 
 #define FDEBUG_LOG // print debugging information into the file
 
+extern cl::opt<bool>
+ENABLE_RISCV;
 using namespace llvm;
 using std::string;
 
@@ -186,8 +188,12 @@ namespace llvm{
 			TypeUtil.Int32Ty = Type::getInt32Ty(Ctx);
   
 			TypeUtil.MetadataTy = ArrayType::get(TypeUtil.Int64Ty, 2);
-			TypeUtil.MetaPageTable = ConstantInt::get(TypeUtil.Int64Ty, 0x400000000000);
-                        
+                        // need to fix page table address
+                        if(!ENABLE_RISCV)
+                          TypeUtil.MetaPageTable = ConstantInt::get(TypeUtil.Int64Ty, 0x400000000000);
+                        else
+                          TypeUtil.MetaPageTable = ConstantInt::get(TypeUtil.Int64Ty, 0x50000000);
+
 			//TargetLibraryInfoImpl tlii;
 			//TLI = new TargetLibraryInfo(tlii);
 			VoidTy = Type::getVoidTy(Ctx);

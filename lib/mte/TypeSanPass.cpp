@@ -37,6 +37,12 @@
 
 #define FDEBUG_LOG // print debugging information into the file
 
+cl::opt<bool>
+ENABLE_RISCV
+("enable_riscv",
+ cl::desc("enable riscv"),
+ cl::init(false)); // jsshin
+
 //register pass
 char TypeSan::ID = 0;
 
