@@ -51,7 +51,7 @@ using namespace llvm;
 
 
 static cl::opt<UnsafeStackPtrStorageVal> USPStorage("meta-stack-usp-storage",
-                                                    cl::Hidden, cl::init(ThreadLocalUSP),
+                                                    cl::Hidden, cl::init(SingleThreadUSP),
                                                     cl::desc("Type of storage for the unsafe stack pointer"),
                                                     cl::values(clEnumValN(ThreadLocalUSP, "thread-local",
                                                                           "Thread-local storage"),
