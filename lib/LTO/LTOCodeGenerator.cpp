@@ -539,6 +539,7 @@ bool LTOCodeGenerator::optimize(bool DisableVerify, bool DisableInline,
     passes.add(new TypeSan());
   }
 
+   PMB.populateLTOPassManager(passes);
   // Run our queue of passes all at once now, efficiently.
   passes.run(*MergedModule);
 
