@@ -5778,6 +5778,15 @@ void SoftBoundCETSPass::calculateMTECostForFunc(Function *F) {
   }
 }
 
+void SoftBoundCETSPass::recursiveAssignTag(MTECGNode *N, Value *Root) {
+  for (MTECGNode *CGN : N->Callees) {
+    if (ModuleMTEInfo[CGN].count(Root)) {
+      ModuleMTEInfo[CGN][Root].TagAssigned = true;
+      recursiveAssignTag(CGN, Root);
+    }
+  }
+}
+
 void SoftBoundCETSPass::calculateFinalMTECost(const DataLayout &DL, MTECGNode *N) {
   for (auto *F : N->Functions) {
     for (auto &I : F->getBasicBlockList()) {
@@ -5886,6 +5895,20 @@ void SoftBoundCETSPass::calculateFinalMTECost(const DataLayout &DL, MTECGNode *N
     double Cost = I.second.Cost - MTE_SIZE_UNKNOWN * MTE_SIZE_PENALTY;
     if (Cost > MTE_THRESHOLD)
       MTEInfoSorted.insert(std::pair<double, MTEInfo>(Cost, I.second));
+  }
+
+  int i = 0;
+  for (auto I : MTEInfoSorted) {
+    if (i++ < 15) {
+      Value *Root = I.second.Root;// assert(isa<Constant>(Root) && !I.second.isGlobalPtr);
+      for (Function *F : N->Functions)
+        dbgs() << F->getName() << " ";
+      dbgs() << '\n';
+      Root->dump();
+      dbgs() << "Cost: " << I.first << '\n';
+      ModuleMTEInfo[N][Root].TagAssigned = true;
+      recursiveAssignTag(N, Root);
+    }
   }
 
   MTECostAvailable.insert(N);

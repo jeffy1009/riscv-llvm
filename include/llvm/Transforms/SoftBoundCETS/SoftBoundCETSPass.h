@@ -320,6 +320,7 @@ class SoftBoundCETSPass: public ModulePass {
   void printMTEInfoSorted(MTEInfoSortedTy &MTEInfoSorted);
   bool findRange(Value *Root, BasicBlock *BB, Loop *&Range);
   void calculateMTECostForFunc(Function *F);
+  void recursiveAssignTag(MTECGNode *N, Value *Root);
   void calculateFinalMTECost(const DataLayout &DL, MTECGNode *N);
 
   void initializeSoftBoundVariables(Module&);
