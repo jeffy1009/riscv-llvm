@@ -5778,7 +5778,7 @@ void SoftBoundCETSPass::calculateMTECostForFunc(Function *F) {
   }
 }
 
-void SoftBoundCETSPass::calculateFinalMTECost(MTECGNode *N) {
+void SoftBoundCETSPass::calculateFinalMTECost(const DataLayout &DL, MTECGNode *N) {
   for (auto *F : N->Functions) {
     for (auto &I : F->getBasicBlockList()) {
       BasicBlock *BB = &I;
@@ -5811,7 +5811,7 @@ void SoftBoundCETSPass::calculateFinalMTECost(MTECGNode *N) {
           continue;
 
         if (!MTECostAvailable.count(CalleeN))
-          calculateFinalMTECost(CalleeN);
+          calculateFinalMTECost(DL, CalleeN);
 
         FuncMTEInfoTy &FuncMTEInfo = ModuleMTEInfo[FuncCGNodeMap[F]];
         FuncMTEInfoTy &CalleeMTEInfo = ModuleMTEInfo[CalleeN];
@@ -5857,6 +5857,35 @@ void SoftBoundCETSPass::calculateFinalMTECost(MTECGNode *N) {
         }
       }
     }
+  }
+
+  const int MTE_SIZE_PENALTY = 8; // Per byte
+  const int MTE_SIZE_UNKNOWN = 4096; // Bytes
+
+  MTEInfoSortedTy MTEInfoSorted;
+  for (auto &I : ModuleMTEInfo[N]) {
+    Value *Root = I.first;
+    unsigned int Size;
+    // TODO: other cases that we know the size statically?
+    if (isa<AllocaInst>(Root) || isa<Constant>(Root))
+      Size = DL.getTypeAllocSize(cast<PointerType>(Root->getType())->getElementType());
+    else
+      Size = MTE_SIZE_UNKNOWN;
+    double BBFreq;
+    if (isa<Argument>(Root) || isa<Constant>(Root))
+      BBFreq = 1;
+    else
+      BBFreq = BlockFreq[cast<Instruction>(Root)->getParent()];
+    // Compensate for tag coloring overhead
+    double Cost = I.second.Cost - Size * MTE_SIZE_PENALTY * BBFreq;
+    if (Cost > MTE_THRESHOLD)
+      MTEInfoSorted.insert(std::pair<double, MTEInfo>(Cost, I.second));
+  }
+
+  for (auto &I : ModuleGlobalPtrInfo[N]) {
+    double Cost = I.second.Cost - MTE_SIZE_UNKNOWN * MTE_SIZE_PENALTY;
+    if (Cost > MTE_THRESHOLD)
+      MTEInfoSorted.insert(std::pair<double, MTEInfo>(Cost, I.second));
   }
 
   MTECostAvailable.insert(N);
@@ -5945,8 +5974,8 @@ bool SoftBoundCETSPass::runOnModule(Module& module) {
     }
 
     MTECGNode *MainFuncCGN = FuncCGNodeMap[MainFunc];
-    calculateFinalMTECost(MainFuncCGN);
-
+    calculateFinalMTECost(module.getDataLayout(), MainFuncCGN);
+#if 0
     // Sort according to the cost (descending order)
     MTEInfoSortedTy MTEInfoSorted;
     for (auto CGNI : FuncCGNodeMap)
@@ -6002,6 +6031,7 @@ bool SoftBoundCETSPass::runOnModule(Module& module) {
         }
       }
     }
+#endif
   }
 
   for(Module::iterator ff_begin = module.begin(), ff_end = module.end();

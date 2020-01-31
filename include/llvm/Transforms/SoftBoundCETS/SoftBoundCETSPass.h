@@ -312,7 +312,7 @@ class SoftBoundCETSPass: public ModulePass {
      pass
    */
   bool runOnModule(Module&);
-#if 1
+  /* MTE */
   void buildMTECallGraph(Function *F, SmallVectorImpl<Function *> &Stack);
   void analyzePtrRoots(Function *F);
   void saveBlockFreq(Function *F);
@@ -320,8 +320,8 @@ class SoftBoundCETSPass: public ModulePass {
   void printMTEInfoSorted(MTEInfoSortedTy &MTEInfoSorted);
   bool findRange(Value *Root, BasicBlock *BB, Loop *&Range);
   void calculateMTECostForFunc(Function *F);
-  void calculateFinalMTECost(MTECGNode *N);
-#endif
+  void calculateFinalMTECost(const DataLayout &DL, MTECGNode *N);
+
   void initializeSoftBoundVariables(Module&);
   void identifyOriginalInst(Function*);
   bool isAllocaPresent(Function*);
