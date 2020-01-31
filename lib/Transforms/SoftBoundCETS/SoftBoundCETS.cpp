@@ -3152,71 +3152,51 @@ SoftBoundCETSPass::addLoadStoreChecks(Instruction* load_store,
     FuncMTEInfoTy &MainFuncMTEInfo = ModuleMTEInfo[MainCGN];
     FuncMTEInfoTy &MainFuncGlobalPtrInfo = ModuleGlobalPtrInfo[MainCGN];
 
-    if ((isa<LoadInst>(Root) && isa<GlobalVariable>(cast<LoadInst>(Root)->getPointerOperand())
-            && MainFuncGlobalPtrInfo[cast<LoadInst>(Root)->getPointerOperand()].TagAssigned)) {
-      dbgs() << " ";
-    }
-    if ((isa<Constant>(Root) && MainFuncMTEInfo.count(Root) && MainFuncMTEInfo[Root].TagAssigned)
-        || (!isa<Constant>(Root) && FuncMTEInfo.count(Root) && FuncMTEInfo[Root].TagAssigned)
-        || (isa<LoadInst>(Root) && isa<GlobalVariable>(cast<LoadInst>(Root)->getPointerOperand())
-            && MainFuncGlobalPtrInfo[cast<LoadInst>(Root)->getPointerOperand()].TagAssigned)) {
+    if (FuncMTEInfo.count(Root) && FuncMTEInfo[Root].TagAssigned) {
       Loop *L = NULL;
       if (!findRange(Root, BB, L))
         goto cont;
 
       mte_bound_check_eliminated++;
-      if (!FuncMTEInfo[Root].ColoringDone) {
+      SmallVector<MTECGNode *, 4> WorkList;
+      WorkList.push_back(CGN);
+      while (!WorkList.empty()) {
+        MTECGNode *CGN2 = WorkList.pop_back_val();
+        FuncMTEInfoTy &Info = ModuleMTEInfo[CGN2];
+        for (Function *F2 : CGN2->Functions) {
+          assert(Info.count(Root));
+          if (Info[Root].TagAssigned && !Info[Root].ColoringDone) {
+            Instruction *InsertPos;
+            if (L)
+              InsertPos = L->getLoopPreheader()->getTerminator();
+            else
+              InsertPos = F2->getEntryBlock().getTerminator();
 
-        Instruction *InsertPos;
-        if (L)
-          InsertPos = L->getLoopPreheader()->getTerminator();
-        else
-          InsertPos = F->getEntryBlock().getTerminator();
+            Value* tmp_base = NULL;
+            Value* tmp_bound = NULL;
 
-        Value* tmp_base = NULL;
-        Value* tmp_bound = NULL;
-
-        if (Constant* given_constant = dyn_cast<Constant>(Root)) {
-          getConstantExprBaseBound(given_constant, tmp_base, tmp_bound);
-        } else {
-          tmp_base = getAssociatedBase(Root);
-          tmp_bound = getAssociatedBound(Root);
-        }
+            if (Constant* given_constant = dyn_cast<Constant>(Root)) {
+              getConstantExprBaseBound(given_constant, tmp_base, tmp_bound);
+            } else {
+              tmp_base = getAssociatedBase(Root);
+              tmp_bound = getAssociatedBound(Root);
+            }
 #if 1
-        Value* bitcast_base = castToVoidPtr(tmp_base, InsertPos);
-        args.push_back(bitcast_base);
+            Value* bitcast_base = castToVoidPtr(tmp_base, InsertPos);
+            args.push_back(bitcast_base);
 
-        Value* bitcast_bound = castToVoidPtr(tmp_bound, InsertPos);
-        args.push_back(bitcast_bound);
+            Value* bitcast_bound = castToVoidPtr(tmp_bound, InsertPos);
+            args.push_back(bitcast_bound);
 
-        setNearestDbgLoc(CallInst::Create(m_mte_color_tag, args, "", InsertPos), InsertPos);
-        args.clear();
+            setNearestDbgLoc(CallInst::Create(m_mte_color_tag, args, "", InsertPos), InsertPos);
+            args.clear();
 #endif
-#if 0
-        if (L) {
-          SmallVector<BasicBlock*, 8> ExitBlocks;
-          L->getExitBlocks(ExitBlocks);
-          std::sort(ExitBlocks.begin(), ExitBlocks.end());
-          ExitBlocks.erase(std::unique(ExitBlocks.begin(), ExitBlocks.end()), ExitBlocks.end());
-          for (auto I : ExitBlocks) {
-            InsertPos = &*I->getFirstInsertionPt();
-            CallInst::Create(m_mte_uncolor_tag, {}, "", InsertPos);
-          }
-        } else {
-          for (auto &I : F->getBasicBlockList()) {
-            BasicBlock *BB = &I;
-            bool RetBB = false;
-            for (auto &II : BB->getInstList())
-              if (isa<ReturnInst>(II))
-                RetBB = true;
-
-            if (RetBB)
-              CallInst::Create(m_mte_uncolor_tag, {}, "", BB->getTerminator());
+            Info[Root].ColoringDone = true;
           }
         }
-#endif
-
-        FuncMTEInfo[Root].ColoringDone = true;
+        if (L) break;
+        for (MTECGNode *CallerCGN : CGN2->Callers)
+          WorkList.push_back(CallerCGN);
       }
       return; //JSSHIN
     }
@@ -5753,9 +5733,9 @@ void SoftBoundCETSPass::calculateMTECostForFunc(Function *F) {
       assert(PtrRootMap.count(pointer_operand));
       Value *Root = PtrRootMap[pointer_operand];
 
-      Loop *Range;
-      if (!findRange(Root, BB, Range))
-        continue;
+      // Loop *Range;
+      // if (!findRange(Root, BB, Range))
+      //   continue;
 
       assert(BlockFreq.count(BB));
       if (LoadInst *LI = dyn_cast<LoadInst>(Root)) {
