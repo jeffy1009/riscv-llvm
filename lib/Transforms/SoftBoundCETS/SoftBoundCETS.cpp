@@ -6078,6 +6078,10 @@ bool SoftBoundCETSPass::runOnModule(Module& module) {
     gatherBaseBoundPass2(func_ptr);
     addDereferenceChecks(func_ptr);
     if (ENABLE_MTE) {
+      Instruction *InsertPos = &*func_ptr->getEntryBlock().getFirstInsertionPt();
+      setNearestDbgLoc(CallInst::Create(m_mte_inc_lru, {}, "", InsertPos), InsertPos);
+    }
+    if (ENABLE_MTE) {
       for (auto &I : func_ptr->getBasicBlockList()) {
         BasicBlock *BB = &I;
         bool RetBB = false;
