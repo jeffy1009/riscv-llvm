@@ -292,6 +292,7 @@ class SoftBoundCETSPass: public ModulePass {
     bool isRecursive;
   };
 
+  SmallPtrSet<Function *, 4> AddressTakenFuncs;
   DenseMap<Function *, MTECGNode *> FuncCGNodeMap;
   DenseMap<Value *, Value *> PtrRootMap;
   DenseMap<BasicBlock *, double> BlockFreq;

@@ -5574,7 +5574,10 @@ void SoftBoundCETSPass::buildMTECallGraph(Function *F, SmallVectorImpl<Function 
 
       Function *Callee = CI->getCalledFunction();
       if (!Callee) {
-        assert(cast<Function>(CI->getCalledValue()->stripPointerCasts())->isDeclaration());
+        Value *Stripped = CI->getCalledValue()->stripPointerCasts();
+        if (isa<Function>(Stripped))
+          assert(cast<Function>(Stripped)->isDeclaration());
+        // TODO handle indirect call using AddressTakenFuncs
         continue;
       }
 
@@ -5618,7 +5621,10 @@ void SoftBoundCETSPass::analyzePtrRoots(Function *F) {
 
         Function *Callee = CI->getCalledFunction();
         if (!Callee) {
-          assert(cast<Function>(CI->getCalledValue()->stripPointerCasts())->isDeclaration());
+          Value *Stripped = CI->getCalledValue()->stripPointerCasts();
+          if (isa<Function>(Stripped))
+            assert(cast<Function>(Stripped)->isDeclaration());
+          // TODO handle indirect call using AddressTakenFuncs
           continue;
         }
 
@@ -5787,7 +5793,10 @@ void SoftBoundCETSPass::calculateFinalMTECost(MTECGNode *N) {
 
         Function *Callee = CI->getCalledFunction();
         if (!Callee) {
-          assert(cast<Function>(CI->getCalledValue()->stripPointerCasts())->isDeclaration());
+          Value *Stripped = CI->getCalledValue()->stripPointerCasts();
+          if (isa<Function>(Stripped))
+            assert(cast<Function>(Stripped)->isDeclaration());
+          // TODO handle indirect call using AddressTakenFuncs
           continue;
         }
 
@@ -5905,6 +5914,16 @@ bool SoftBoundCETSPass::runOnModule(Module& module) {
     ///////////////////////////////
     // MTE Analysis
     ///////////////////////////////
+
+    for (auto &I : module.functions()) {
+      Function *F = &I;
+      if (!checkIfFunctionOfInterest(F))
+        continue;
+      for (const User *U : F->users())
+        if (!isa<BlockAddress>(U) && !isa<CallInst>(U))
+          AddressTakenFuncs.insert(F);
+    }
+    assert(AddressTakenFuncs.size() < 2);
 
     Function *MainFunc = module.getFunction("softboundcets_pseudo_main");
     assert(MainFunc && "No main in this module?");
