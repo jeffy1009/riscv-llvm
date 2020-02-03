@@ -3130,23 +3130,16 @@ SoftBoundCETSPass::addLoadStoreChecks(Instruction* load_store,
     assert(PtrRootMap.count(pointer_operand));
     Value *Root = PtrRootMap[pointer_operand];
 
-    BasicBlock *BB = load_store->getParent();
-    #if 1
     Function *F = load_store->getFunction();
-    Module *M = F->getParent();
     assert(FuncCGNodeMap.count(F));
     MTECGNode *CGN = FuncCGNodeMap[F];
     assert(ModuleMTEInfo.count(CGN));
     FuncMTEInfoTy &FuncMTEInfo = ModuleMTEInfo[CGN];
-    MTECGNode *MainCGN = FuncCGNodeMap[M->getFunction("softboundcets_pseudo_main")];
-    FuncMTEInfoTy &MainFuncMTEInfo = ModuleMTEInfo[MainCGN];
-    FuncMTEInfoTy &MainFuncGlobalPtrInfo = ModuleGlobalPtrInfo[MainCGN];
 
     if (FuncMTEInfo.count(Root) && FuncMTEInfo[Root].TagAssigned) {
       mte_bound_check_eliminated++;
       return; //JSSHIN
     }
-    #endif
   }
  cont:
   Value* tmp_base = NULL;
@@ -5469,7 +5462,7 @@ void SoftBoundCETSPass::buildMTECallGraph(Function *F, SmallVectorImpl<Function 
     if (FuncCGNodeMap.count(F)) {
       CGN = FuncCGNodeMap[F];
     } else {
-      CGN = new MTECGNode;
+      CGN = new MTECGNode();
       CGN->isRecursive = true;
     }
 
@@ -5516,7 +5509,7 @@ void SoftBoundCETSPass::buildMTECallGraph(Function *F, SmallVectorImpl<Function 
 
   MTECGNode *CGN;
   if (!FuncCGNodeMap.count(F)) {
-    CGN = new MTECGNode;
+    CGN = new MTECGNode();
     FuncCGNodeMap[F] = CGN;
     CGN->Functions.insert(F);
   } else {
