@@ -1,7 +1,6 @@
 add_llvm_library(LLVMsoftboundcets
   FixByValAttributesPass.cpp
   InitializeSoftBoundCETS.cpp
-  InitializeSoftBoundMPX.cpp
   SoftBoundCETS.cpp
     
   ADDITIONAL_HEADER_DIRS
