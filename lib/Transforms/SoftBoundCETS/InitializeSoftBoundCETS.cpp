@@ -248,7 +248,7 @@ void InitializeSoftBoundCETS:: constructCheckHandlers(Module & module){
 
   Type* void_ptr_ty = PointerType::getUnqual(Type::getInt8Ty(module.getContext()));
   Type* size_ty = Type::getInt64Ty(module.getContext());
-
+#if 0
   module.getOrInsertFunction("mte_inc_lru",
                              void_ty, NULL);
 
@@ -261,7 +261,7 @@ void InitializeSoftBoundCETS:: constructCheckHandlers(Module & module){
 
   module.getOrInsertFunction("mte_restore_tag",
                              void_ty, NULL);
-
+#endif
   module.getOrInsertFunction("__softboundcets_spatial_load_dereference_check",
                              void_ty, void_ptr_ty, void_ptr_ty,
                              void_ptr_ty, size_ty, NULL);

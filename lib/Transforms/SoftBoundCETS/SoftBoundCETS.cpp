@@ -454,20 +454,10 @@ SoftBoundCETSPass:: getAssociatedFuncLock(Value* PointerInst){
 void SoftBoundCETSPass::initializeSoftBoundVariables(Module& module) {
 
   if(spatial_safety){
-    m_mte_inc_lru =
-      module.getFunction("mte_inc_lru");
-    assert(m_mte_inc_lru &&
-           "m_mte_inc_lru function type null?");
-
     m_mte_color_tag =
       module.getFunction("mte_color_tag");
     assert(m_mte_color_tag &&
            "m_mte_color_tag function type null?");
-
-    m_mte_uncolor_tag =
-      module.getFunction("mte_uncolor_tag");
-    assert(m_mte_uncolor_tag &&
-           "m_mte_uncolor_tag function type null?");
 
     m_mte_restore_tag =
       module.getFunction("mte_restore_tag");
@@ -3153,51 +3143,7 @@ SoftBoundCETSPass::addLoadStoreChecks(Instruction* load_store,
     FuncMTEInfoTy &MainFuncGlobalPtrInfo = ModuleGlobalPtrInfo[MainCGN];
 
     if (FuncMTEInfo.count(Root) && FuncMTEInfo[Root].TagAssigned) {
-      Loop *L = NULL;
-      if (!findRange(Root, BB, L))
-        goto cont;
-
       mte_bound_check_eliminated++;
-      SmallVector<MTECGNode *, 4> WorkList;
-      WorkList.push_back(CGN);
-      while (!WorkList.empty()) {
-        MTECGNode *CGN2 = WorkList.pop_back_val();
-        FuncMTEInfoTy &Info = ModuleMTEInfo[CGN2];
-        for (Function *F2 : CGN2->Functions) {
-          assert(Info.count(Root));
-          if (Info[Root].TagAssigned && !Info[Root].ColoringDone) {
-            Instruction *InsertPos;
-            if (L)
-              InsertPos = L->getLoopPreheader()->getTerminator();
-            else
-              InsertPos = F2->getEntryBlock().getTerminator();
-
-            Value* tmp_base = NULL;
-            Value* tmp_bound = NULL;
-
-            if (Constant* given_constant = dyn_cast<Constant>(Root)) {
-              getConstantExprBaseBound(given_constant, tmp_base, tmp_bound);
-            } else {
-              tmp_base = getAssociatedBase(Root);
-              tmp_bound = getAssociatedBound(Root);
-            }
-#if 1
-            Value* bitcast_base = castToVoidPtr(tmp_base, InsertPos);
-            args.push_back(bitcast_base);
-
-            Value* bitcast_bound = castToVoidPtr(tmp_bound, InsertPos);
-            args.push_back(bitcast_bound);
-
-            setNearestDbgLoc(CallInst::Create(m_mte_color_tag, args, "", InsertPos), InsertPos);
-            args.clear();
-#endif
-            Info[Root].ColoringDone = true;
-          }
-        }
-        if (L) break;
-        for (MTECGNode *CallerCGN : CGN2->Callers)
-          WorkList.push_back(CallerCGN);
-      }
       return; //JSSHIN
     }
     #endif
@@ -5758,16 +5704,7 @@ void SoftBoundCETSPass::calculateMTECostForFunc(Function *F) {
   }
 }
 
-void SoftBoundCETSPass::recursiveAssignTag(MTECGNode *N, Value *Root) {
-  for (MTECGNode *CGN : N->Callees) {
-    if (ModuleMTEInfo[CGN].count(Root)) {
-      ModuleMTEInfo[CGN][Root].TagAssigned = true;
-      recursiveAssignTag(CGN, Root);
-    }
-  }
-}
-
-void SoftBoundCETSPass::calculateFinalMTECost(const DataLayout &DL, MTECGNode *N) {
+void SoftBoundCETSPass::calculateFinalMTECost(MTECGNode *N) {
   for (auto *F : N->Functions) {
     for (auto &I : F->getBasicBlockList()) {
       BasicBlock *BB = &I;
@@ -5800,7 +5737,7 @@ void SoftBoundCETSPass::calculateFinalMTECost(const DataLayout &DL, MTECGNode *N
           continue;
 
         if (!MTECostAvailable.count(CalleeN))
-          calculateFinalMTECost(DL, CalleeN);
+          calculateFinalMTECost(CalleeN);
 
         FuncMTEInfoTy &FuncMTEInfo = ModuleMTEInfo[FuncCGNodeMap[F]];
         FuncMTEInfoTy &CalleeMTEInfo = ModuleMTEInfo[CalleeN];
@@ -5848,11 +5785,29 @@ void SoftBoundCETSPass::calculateFinalMTECost(const DataLayout &DL, MTECGNode *N
     }
   }
 
+  MTECostAvailable.insert(N);
+}
+
+void SoftBoundCETSPass::assignTagsTopDown(const DataLayout &DL, MTECGNode *N, MTECGNode *Parent) {
+  FuncMTEInfoTy &FuncMTEInfo = ModuleMTEInfo[N];
+  FuncMTEInfoTy *ParentMTEInfo = NULL;
+  if (Parent)
+    ParentMTEInfo = &ModuleMTEInfo[Parent];
+
+  if (N->TaggingDone && !N->mayNeedRecoloring) {
+    assert(Parent);
+    for (auto &I : FuncMTEInfo) {
+      if (!I.second.TagAssigned)
+        continue;
+      assert(ParentMTEInfo->lookup(I.first).TagAssigned);
+    }
+  }
+
   const int MTE_SIZE_PENALTY = 8; // Per byte
   const int MTE_SIZE_UNKNOWN = 4096; // Bytes
 
   MTEInfoSortedTy MTEInfoSorted;
-  for (auto &I : ModuleMTEInfo[N]) {
+  for (auto &I : FuncMTEInfo) {
     Value *Root = I.first;
     unsigned int Size;
     // TODO: other cases that we know the size statically?
@@ -5878,20 +5833,48 @@ void SoftBoundCETSPass::calculateFinalMTECost(const DataLayout &DL, MTECGNode *N
   }
 
   int i = 0;
+  bool TagNumArray[16] = {false};
   for (auto I : MTEInfoSorted) {
-    if (i++ < 15) {
-      Value *Root = I.second.Root;// assert(isa<Constant>(Root) && !I.second.isGlobalPtr);
-      for (Function *F : N->Functions)
-        dbgs() << F->getName() << " ";
-      dbgs() << '\n';
-      Root->dump();
-      dbgs() << "Cost: " << I.first << '\n';
-      ModuleMTEInfo[N][Root].TagAssigned = true;
-      recursiveAssignTag(N, Root);
+    if (i++ >= 15) // Select 15 objects
+      break;
+    Value *Root = I.second.Root;
+    for (Function *F : N->Functions)
+      dbgs() << F->getName() << " ";
+    dbgs() << '\n';
+    Root->dump();
+    dbgs() << "Cost: " << I.first << '\n';
+    FuncMTEInfo[Root].TagAssigned = true;
+    if (N->Callees.empty())
+      assert(ParentMTEInfo && ParentMTEInfo->count(Root) && ParentMTEInfo->lookup(Root).TagAssigned);
+    if (isa<Constant>(Root)
+        && ParentMTEInfo && ParentMTEInfo->count(Root) && ParentMTEInfo->lookup(Root).TagAssigned) {
+      int TagNum = ParentMTEInfo->lookup(Root).TagNum;
+      FuncMTEInfo[Root].TagNum = TagNum;
+      TagNumArray[TagNum] = true;
+    } else {
+      int j = 1;
+      while (TagNumArray[j]) j++;
+      assert(j < 16);
+      FuncMTEInfo[Root].TagNum = j;
+      FuncMTEInfo[Root].NeedColoringCode = true;
+      TagNumArray[j] = true;
     }
   }
 
-  MTECostAvailable.insert(N);
+  if (Parent) {
+    for (auto I : ModuleMTEInfo[Parent]) {
+      if (!I.second.TagAssigned)
+        continue;
+      if (FuncMTEInfo.count(I.first) && FuncMTEInfo[I.first].TagAssigned)
+        continue;
+      N->mayNeedRecoloring = true;
+    }
+  }
+
+  N->TaggingDone = true;
+
+  for (MTECGNode *CalleeN : N->Callees)
+    assignTagsTopDown(DL, CalleeN, N);
 }
 
 bool SoftBoundCETSPass::runOnModule(Module& module) {
@@ -5977,7 +5960,10 @@ bool SoftBoundCETSPass::runOnModule(Module& module) {
     }
 
     MTECGNode *MainFuncCGN = FuncCGNodeMap[MainFunc];
-    calculateFinalMTECost(module.getDataLayout(), MainFuncCGN);
+    calculateFinalMTECost(MainFuncCGN);
+
+    assignTagsTopDown(module.getDataLayout(), MainFuncCGN, NULL);
+    MainFuncCGN->mayNeedRecoloring = true;
 #if 0
     // Sort according to the cost (descending order)
     MTEInfoSortedTy MTEInfoSorted;
@@ -6077,11 +6063,46 @@ bool SoftBoundCETSPass::runOnModule(Module& module) {
     gatherBaseBoundPass1(func_ptr);
     gatherBaseBoundPass2(func_ptr);
     addDereferenceChecks(func_ptr);
-    if (ENABLE_MTE) {
-      Instruction *InsertPos = &*func_ptr->getEntryBlock().getFirstInsertionPt();
-      setNearestDbgLoc(CallInst::Create(m_mte_inc_lru, {}, "", InsertPos), InsertPos);
-    }
-    if (ENABLE_MTE) {
+
+    if (ENABLE_MTE && FuncCGNodeMap[func_ptr]->mayNeedRecoloring) {
+#if 1
+      for (auto &I : ModuleMTEInfo[FuncCGNodeMap[func_ptr]]) {
+        if (!I.second.NeedColoringCode)
+          continue;
+
+        Value *Root = I.first;
+        assert(!isa<Argument>(Root));
+        Value* tmp_base = NULL;
+        Value* tmp_bound = NULL;
+        SmallVector<Value*, 8> args;
+        Instruction *InsertPos;
+
+        if (Constant* given_constant = dyn_cast<Constant>(Root)) {
+          getConstantExprBaseBound(given_constant, tmp_base, tmp_bound);
+        } else {
+          tmp_base = getAssociatedBase(Root);
+          tmp_bound = getAssociatedBound(Root);
+          InsertPos = getNextInstruction(cast<Instruction>(tmp_bound));
+        }
+
+        if (isa<Constant>(Root) || isa<Argument>(Root))
+          InsertPos = &*func_ptr->getEntryBlock().getFirstInsertionPt();
+        else {
+          assert(cast<Instruction>(Root)->getFunction() == func_ptr);
+        }
+
+        Value* bitcast_base = castToVoidPtr(tmp_base, InsertPos);
+        args.push_back(bitcast_base);
+
+        Value* bitcast_bound = castToVoidPtr(tmp_bound, InsertPos);
+        args.push_back(bitcast_bound);
+
+        Value* tag_num = ConstantInt::get(Type::getInt32Ty(module.getContext()), I.second.TagNum);
+        args.push_back(tag_num);
+
+        setNearestDbgLoc(CallInst::Create(m_mte_color_tag, args, "", InsertPos), InsertPos);
+      }
+
       for (auto &I : func_ptr->getBasicBlockList()) {
         BasicBlock *BB = &I;
         bool RetBB = false;
@@ -6093,6 +6114,7 @@ bool SoftBoundCETSPass::runOnModule(Module& module) {
           setNearestDbgLoc(CallInst::Create(m_mte_restore_tag, {}, "", BB->getTerminator()),
                            BB->getTerminator(), true);
       }
+#endif
     }
   }
 

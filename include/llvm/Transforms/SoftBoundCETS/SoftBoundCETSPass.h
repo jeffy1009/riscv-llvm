@@ -283,6 +283,8 @@ class SoftBoundCETSPass: public ModulePass {
     bool TagAssigned;
     bool ColoringDone;
     bool isGlobalPtr;
+    bool NeedColoringCode;
+    int TagNum;
   };
 
   struct MTECGNode {
@@ -290,6 +292,8 @@ class SoftBoundCETSPass: public ModulePass {
     SmallPtrSet<MTECGNode *, 8> Callees;
     SmallPtrSet<MTECGNode *, 8> Callers;
     bool isRecursive;
+    bool mayNeedRecoloring;
+    bool TaggingDone;
   };
 
   SmallPtrSet<Function *, 4> AddressTakenFuncs;
@@ -320,8 +324,8 @@ class SoftBoundCETSPass: public ModulePass {
   void printMTEInfoSorted(MTEInfoSortedTy &MTEInfoSorted);
   bool findRange(Value *Root, BasicBlock *BB, Loop *&Range);
   void calculateMTECostForFunc(Function *F);
-  void recursiveAssignTag(MTECGNode *N, Value *Root);
-  void calculateFinalMTECost(const DataLayout &DL, MTECGNode *N);
+  void calculateFinalMTECost(MTECGNode *N);
+  void assignTagsTopDown(const DataLayout &DL, MTECGNode *N, MTECGNode *Parent);
 
   void initializeSoftBoundVariables(Module&);
   void identifyOriginalInst(Function*);
