@@ -5855,16 +5855,18 @@ void SoftBoundCETSPass::assignTagsTopDown(const DataLayout &DL, MTECGNode *N, MT
   }
 
   if (Parent) {
-    for (auto I : ModuleMTEInfo[Parent]) {
+    for (auto I : FuncMTEInfo) {
       if (!I.second.TagAssigned)
         continue;
-      if (FuncMTEInfo.count(I.first) && FuncMTEInfo[I.first].TagAssigned)
+      if (ParentMTEInfo->count(I.first) && ParentMTEInfo->lookup(I.first).TagAssigned)
         continue;
       N->mayNeedRecoloring = true;
     }
   }
 
   N->TaggingDone = true;
+  if (N->Callees.empty())
+    assert(!N->mayNeedRecoloring);
 
   for (MTECGNode *CalleeN : N->Callees)
     assignTagsTopDown(DL, CalleeN, N);
