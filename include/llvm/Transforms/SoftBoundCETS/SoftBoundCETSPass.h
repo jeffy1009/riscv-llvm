@@ -303,7 +303,7 @@ class SoftBoundCETSPass: public ModulePass {
   DenseMap<Value *, SmallPtrSet<Argument *, 8> > RootArgMap;
 
   typedef DenseMap<Value *, MTEInfo > FuncMTEInfoTy;
-  typedef std::multimap<double, MTEInfo, std::greater<double> > MTEInfoSortedTy;
+  typedef std::multimap<double, MTEInfo*, std::greater<double> > MTEInfoSortedTy;
   DenseMap<MTECGNode *, FuncMTEInfoTy>  ModuleMTEInfo;
   DenseMap<MTECGNode *, FuncMTEInfoTy>  ModuleGlobalPtrInfo;
 
@@ -325,6 +325,8 @@ class SoftBoundCETSPass: public ModulePass {
   bool findRange(Value *Root, BasicBlock *BB, Loop *&Range);
   void calculateMTECostForFunc(Function *F);
   void calculateFinalMTECost(MTECGNode *N);
+  void cancelTagAssignment(MTECGNode *N, Value *Root);
+  double getColoringOverhead(const DataLayout &DL, Value *Root);
   void assignTagsTopDown(const DataLayout &DL, MTECGNode *N, MTECGNode *Parent);
 
   void initializeSoftBoundVariables(Module&);

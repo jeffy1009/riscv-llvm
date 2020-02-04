@@ -5586,7 +5586,7 @@ void SoftBoundCETSPass::saveBlockFreq(Function *F) {
     BlockFreq[BB] = BFI->getBlockFreq(BB).getFrequency() / (double)BFI->getEntryFreq();
   }
 }
-
+#if 0
 void SoftBoundCETSPass::printFuncMTEInfo(FuncMTEInfoTy &FuncMTEInfo) {
   MTEInfoSortedTy MTEInfoSorted;
   for (auto I : FuncMTEInfo)
@@ -5604,7 +5604,7 @@ void SoftBoundCETSPass::printMTEInfoSorted(MTEInfoSortedTy &MTEInfoSorted) {
     dbgs() << '\n';
   }
 }
-
+#endif
 bool SoftBoundCETSPass::findRange(Value *Root, BasicBlock *BB, Loop *&Range) {
   Loop *L = LI->getLoopFor(BB);
   Loop *RootLoop;
@@ -5781,95 +5781,134 @@ void SoftBoundCETSPass::calculateFinalMTECost(MTECGNode *N) {
   MTECostAvailable.insert(N);
 }
 
+void SoftBoundCETSPass::cancelTagAssignment(MTECGNode *N, Value *Root) {
+  FuncMTEInfoTy &FuncMTEInfo = ModuleMTEInfo[N];
+  if (!FuncMTEInfo.count(Root))
+    return;
+
+  FuncMTEInfo[Root].TagAssigned = false;
+  for (MTECGNode *CalleeN : N->Callees)
+    cancelTagAssignment(CalleeN, Root);
+}
+
+const int MTE_SIZE_PENALTY = 2; // Per byte
+const int MTE_SIZE_UNKNOWN = 4096; // Bytes
+
+double SoftBoundCETSPass::getColoringOverhead(const DataLayout &DL, Value *Root) {
+  unsigned int Size;
+  // TODO: other cases that we know the size statically?
+  if (isa<AllocaInst>(Root) || isa<Constant>(Root))
+    Size = DL.getTypeAllocSize(cast<PointerType>(Root->getType())->getElementType());
+  else
+    Size = MTE_SIZE_UNKNOWN;
+  double BBFreq;
+  if (isa<Argument>(Root) || isa<Constant>(Root))
+    BBFreq = 1;
+  else
+    BBFreq = BlockFreq[cast<Instruction>(Root)->getParent()];
+
+  return Size * MTE_SIZE_PENALTY * BBFreq;
+}
+
 void SoftBoundCETSPass::assignTagsTopDown(const DataLayout &DL, MTECGNode *N, MTECGNode *Parent) {
+  dbgs() << "Assigning tags for node " << N << ": ";
+  for (Function *F : N->Functions)
+    dbgs() << F->getName() << " ";
+  dbgs() << '\n';
+
   FuncMTEInfoTy &FuncMTEInfo = ModuleMTEInfo[N];
   FuncMTEInfoTy *ParentMTEInfo = NULL;
   if (Parent)
     ParentMTEInfo = &ModuleMTEInfo[Parent];
 
-  if (N->TaggingDone && !N->mayNeedRecoloring) {
-    assert(Parent);
-    for (auto &I : FuncMTEInfo) {
-      if (!I.second.TagAssigned)
-        continue;
-      assert(ParentMTEInfo->lookup(I.first).TagAssigned);
-    }
-  }
-
-  const int MTE_SIZE_PENALTY = 8; // Per byte
-  const int MTE_SIZE_UNKNOWN = 4096; // Bytes
-
   MTEInfoSortedTy MTEInfoSorted;
   for (auto &I : FuncMTEInfo) {
     Value *Root = I.first;
-    unsigned int Size;
-    // TODO: other cases that we know the size statically?
-    if (isa<AllocaInst>(Root) || isa<Constant>(Root))
-      Size = DL.getTypeAllocSize(cast<PointerType>(Root->getType())->getElementType());
-    else
-      Size = MTE_SIZE_UNKNOWN;
-    double BBFreq;
-    if (isa<Argument>(Root) || isa<Constant>(Root))
-      BBFreq = 1;
-    else
-      BBFreq = BlockFreq[cast<Instruction>(Root)->getParent()];
-    // Compensate for tag coloring overhead
-    double Cost = I.second.Cost - Size * MTE_SIZE_PENALTY * BBFreq;
-    if (Cost > MTE_THRESHOLD)
-      MTEInfoSorted.insert(std::pair<double, MTEInfo>(Cost, I.second));
+    double Cost = I.second.Cost - getColoringOverhead(DL, Root);
+    MTEInfoSorted.insert(std::pair<double, MTEInfo*>(Cost, &I.second));
   }
 
   for (auto &I : ModuleGlobalPtrInfo[N]) {
     double Cost = I.second.Cost - MTE_SIZE_UNKNOWN * MTE_SIZE_PENALTY;
-    if (Cost > MTE_THRESHOLD)
-      MTEInfoSorted.insert(std::pair<double, MTEInfo>(Cost, I.second));
+    MTEInfoSorted.insert(std::pair<double, MTEInfo*>(Cost, &I.second));
   }
 
   int i = 0;
   bool TagNumArray[16] = {false};
-  for (auto I : MTEInfoSorted) {
-    if (i++ >= 15) // Select 15 objects
-      break;
-    Value *Root = I.second.Root;
-    for (Function *F : N->Functions)
-      dbgs() << F->getName() << " ";
-    dbgs() << '\n';
-    Root->dump();
-    dbgs() << "Cost: " << I.first << '\n';
-    FuncMTEInfo[Root].TagAssigned = true;
-    if (N->Callees.empty())
+  SmallPtrSet<MTEInfo*, 8> Temp;
+  MTEInfoSortedTy::iterator I = MTEInfoSorted.begin(), E = MTEInfoSorted.end();
+  for (; I != E && i < 15; ++I, ++i) {  // Select 15 objects
+    MTEInfo *CurInfo = (*I).second;
+    Value *Root = CurInfo->Root;
+    double Cost = (*I).first;
+
+    if (isa<Constant>(Root) && Cost > MTE_THRESHOLD && N->Callees.empty())
       assert(ParentMTEInfo && ParentMTEInfo->count(Root) && ParentMTEInfo->lookup(Root).TagAssigned);
     if (isa<Constant>(Root)
         && ParentMTEInfo && ParentMTEInfo->count(Root) && ParentMTEInfo->lookup(Root).TagAssigned) {
       int TagNum = ParentMTEInfo->lookup(Root).TagNum;
       FuncMTEInfo[Root].TagNum = TagNum;
       TagNumArray[TagNum] = true;
+    } else if (Cost > MTE_THRESHOLD) {
+      Temp.insert(CurInfo);
+      dbgs() << "[New] ";
     } else {
-      int j = 1;
-      while (TagNumArray[j]) j++;
-      assert(j < 16);
-      FuncMTEInfo[Root].TagNum = j;
-      FuncMTEInfo[Root].NeedColoringCode = true;
-      TagNumArray[j] = true;
+      continue;
     }
+
+    FuncMTEInfo[Root].TagAssigned = true;
+    Root->dump();
+    dbgs() << "Cost: " << Cost;
+    if (CurInfo->isGlobalPtr) dbgs() << " [GlobalPtr]";
+    dbgs() << '\n';
   }
 
-  if (Parent) {
-    for (auto I : FuncMTEInfo) {
-      if (!I.second.TagAssigned)
-        continue;
-      if (ParentMTEInfo->count(I.first) && ParentMTEInfo->lookup(I.first).TagAssigned)
-        continue;
-      N->mayNeedRecoloring = true;
+  // Print tag unassigned global objects
+  dbgs() << "The following objects will be untagged in this function...\n";
+  for (; I != E; ++I) {
+    MTEInfo *CurInfo = (*I).second;
+    Value *Root = CurInfo->Root;
+    double Cost = (*I).first;
+    if (isa<Constant>(Root)
+        && ParentMTEInfo && ParentMTEInfo->count(Root) && ParentMTEInfo->lookup(Root).TagAssigned) {
+      Root->dump();
+      dbgs() << "Cost: " << Cost;
+      if (CurInfo->isGlobalPtr) dbgs() << " GlobalPtr";
+      dbgs() << '\n';
     }
+  }
+  dbgs() << '\n';
+
+  // Assign tag number for the newly tagged objects
+  i = 1;
+  for (MTEInfo *I : Temp) {
+    while (TagNumArray[i]) i++;
+    assert(i < 16);
+    I->TagNum = i;
+    I->NeedColoringCode = true;
+    TagNumArray[i] = true;
+    N->mayNeedRecoloring = true;
   }
 
   N->TaggingDone = true;
   if (N->Callees.empty())
     assert(!N->mayNeedRecoloring);
 
-  for (MTECGNode *CalleeN : N->Callees)
-    assignTagsTopDown(DL, CalleeN, N);
+  for (MTECGNode *CalleeN : N->Callees) {
+    if (!CalleeN->TaggingDone) {
+      assignTagsTopDown(DL, CalleeN, N);
+      continue;
+    }
+
+    if (!CalleeN->mayNeedRecoloring) {
+      for (auto &I : ModuleMTEInfo[CalleeN]) {
+        if (!I.second.TagAssigned)
+          continue;
+        assert(I.second.Cost - getColoringOverhead(DL, I.first) < MTE_THRESHOLD);
+        cancelTagAssignment(CalleeN, I.first);
+      }
+    }
+  }
 }
 
 bool SoftBoundCETSPass::runOnModule(Module& module) {
@@ -5958,7 +5997,7 @@ bool SoftBoundCETSPass::runOnModule(Module& module) {
     calculateFinalMTECost(MainFuncCGN);
 
     assignTagsTopDown(module.getDataLayout(), MainFuncCGN, NULL);
-    MainFuncCGN->mayNeedRecoloring = true;
+
 #if 0
     // Sort according to the cost (descending order)
     MTEInfoSortedTy MTEInfoSorted;
