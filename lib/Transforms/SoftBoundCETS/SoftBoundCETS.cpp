@@ -5479,10 +5479,10 @@ void SoftBoundCETSPass::buildMTECallGraph(Function *F, SmallVectorImpl<Function 
 
   Stack.push_back(F);
   SmallPtrSet<Function *, 8> Callees;
-  for (auto &I : F->getBasicBlockList()) {
-    BasicBlock *BB = &I;
-    for (auto &II : BB->getInstList()) {
-      Instruction *Inst = &II;
+  for (auto &BBI : F->getBasicBlockList()) {
+    BasicBlock *BB = &BBI;
+    for (auto &InstI : BB->getInstList()) {
+      Instruction *Inst = &InstI;
       assert(!isa<InvokeInst>(Inst) && "C++ not supported yet!");
       CallInst *CI = dyn_cast<CallInst>(Inst);
       if (!CI)
@@ -5529,11 +5529,11 @@ void SoftBoundCETSPass::buildMTECallGraph(Function *F, SmallVectorImpl<Function 
 }
 
 void SoftBoundCETSPass::analyzePtrRoots(Function *F) {
-  for (auto &I : F->getBasicBlockList()) {
-    BasicBlock *BB = &I;
+  for (auto &BBI : F->getBasicBlockList()) {
+    BasicBlock *BB = &BBI;
 
-    for (auto &II : BB->getInstList()) {
-      Instruction* insn = &II;
+    for (auto &InstI : BB->getInstList()) {
+      Instruction* insn = &InstI;
       if (CallInst *CI = dyn_cast<CallInst>(insn)) {
         if (CI->isInlineAsm())
           continue;
@@ -5581,8 +5581,8 @@ void SoftBoundCETSPass::analyzePtrRoots(Function *F) {
 }
 
 void SoftBoundCETSPass::saveBlockFreq(Function *F) {
-  for (auto &I : F->getBasicBlockList()) {
-    BasicBlock *BB = &I;
+  for (auto &BBI : F->getBasicBlockList()) {
+    BasicBlock *BB = &BBI;
     BlockFreq[BB] = BFI->getBlockFreq(BB).getFrequency() / (double)BFI->getEntryFreq();
   }
 }
@@ -5652,10 +5652,10 @@ void SoftBoundCETSPass::calculateMTECostForFunc(Function *F) {
     return;
 
   FuncMTEInfoTy &FuncMTEInfo = ModuleMTEInfo[FuncCGNodeMap[F]];
-  for (auto &I : F->getBasicBlockList()) {
-    BasicBlock *BB = &I;
-    for (auto &II : BB->getInstList()) {
-      Instruction* insn = &II;
+  for (auto &BBI : F->getBasicBlockList()) {
+    BasicBlock *BB = &BBI;
+    for (auto &InstI : BB->getInstList()) {
+      Instruction* insn = &InstI;
       if (!isa<LoadInst>(insn) && !isa<StoreInst>(insn))
         continue;
 
@@ -5699,10 +5699,10 @@ void SoftBoundCETSPass::calculateMTECostForFunc(Function *F) {
 
 void SoftBoundCETSPass::calculateFinalMTECost(MTECGNode *N) {
   for (auto *F : N->Functions) {
-    for (auto &I : F->getBasicBlockList()) {
-      BasicBlock *BB = &I;
-      for (auto &II : BB->getInstList()) {
-        Instruction *Inst = &II;
+    for (auto &BBI : F->getBasicBlockList()) {
+      BasicBlock *BB = &BBI;
+      for (auto &InstI : BB->getInstList()) {
+        Instruction *Inst = &InstI;
         CallInst *CI = dyn_cast<CallInst>(Inst);
         if (!CI)
           continue;
@@ -6123,12 +6123,11 @@ bool SoftBoundCETSPass::runOnModule(Module& module) {
         args.push_back(ConstantInt::get(Type::getInt32Ty(module.getContext()), I.second.TagNum));
         setNearestDbgLoc(CallInst::Create(m_mte_color_tag, args, "", InsertPos), InsertPos);
       }
-
-      for (auto &I : func_ptr->getBasicBlockList()) {
-        BasicBlock *BB = &I;
+      for (auto &BBI : func_ptr->getBasicBlockList()) {
+        BasicBlock *BB = &BBI;
         bool RetBB = false;
-        for (auto &II : BB->getInstList())
-          if (isa<ReturnInst>(II))
+        for (auto &InstI : BB->getInstList())
+          if (isa<ReturnInst>(InstI))
             RetBB = true;
 
         if (RetBB)
