@@ -309,7 +309,7 @@ class SoftBoundCETSPass: public ModulePass {
   DenseMap<BasicBlock *, double> BlockFreq;
   DenseMap<Value *, SmallPtrSet<Argument *, 8> > RootArgMap;
 
-  typedef DenseMap<Value *, MTEInfo> FuncMTEInfoTy;
+  typedef DenseMap<Value *, MTEInfo*> FuncMTEInfoTy;
   typedef DenseMap<GlobalVariable *, GPStoreInfo> FuncGPStoreInfoTy;
   typedef std::multimap<double, MTEInfo*, std::greater<double> > MTEInfoSortedTy;
   DenseMap<MTECGNode *, FuncMTEInfoTy>  ModuleMTEInfo;
