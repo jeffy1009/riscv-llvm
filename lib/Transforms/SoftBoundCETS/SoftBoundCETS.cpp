@@ -6105,35 +6105,22 @@ bool SoftBoundCETSPass::runOnModule(Module& module) {
           continue;
 
         Value *Root = I.first;
-        assert(!isa<Argument>(Root));
-        Value* tmp_base = NULL;
-        Value* tmp_bound = NULL;
-        SmallVector<Value*, 8> args;
+        Value* tmp_base = NULL, *tmp_bound = NULL;
         Instruction *InsertPos;
-
         if (Constant* given_constant = dyn_cast<Constant>(Root)) {
           getConstantExprBaseBound(given_constant, tmp_base, tmp_bound);
+          InsertPos = &*func_ptr->getEntryBlock().getFirstInsertionPt();
         } else {
           tmp_base = getAssociatedBase(Root);
           tmp_bound = getAssociatedBound(Root);
           InsertPos = getNextInstruction(cast<Instruction>(tmp_bound));
+          assert(isa<Argument>(Root) || cast<Instruction>(Root)->getFunction() == func_ptr);
         }
 
-        if (isa<Constant>(Root) || isa<Argument>(Root))
-          InsertPos = &*func_ptr->getEntryBlock().getFirstInsertionPt();
-        else {
-          assert(cast<Instruction>(Root)->getFunction() == func_ptr);
-        }
-
-        Value* bitcast_base = castToVoidPtr(tmp_base, InsertPos);
-        args.push_back(bitcast_base);
-
-        Value* bitcast_bound = castToVoidPtr(tmp_bound, InsertPos);
-        args.push_back(bitcast_bound);
-
-        Value* tag_num = ConstantInt::get(Type::getInt32Ty(module.getContext()), I.second.TagNum);
-        args.push_back(tag_num);
-
+        SmallVector<Value*, 8> args;
+        args.push_back(castToVoidPtr(tmp_base, InsertPos));
+        args.push_back(castToVoidPtr(tmp_bound, InsertPos));
+        args.push_back(ConstantInt::get(Type::getInt32Ty(module.getContext()), I.second.TagNum));
         setNearestDbgLoc(CallInst::Create(m_mte_color_tag, args, "", InsertPos), InsertPos);
       }
 
