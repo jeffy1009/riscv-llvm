@@ -5652,6 +5652,7 @@ void SoftBoundCETSPass::calculateMTECostForFunc(Function *F) {
     return;
 
   FuncMTEInfoTy &FuncMTEInfo = ModuleMTEInfo[FuncCGNodeMap[F]];
+  FuncGPStoreInfoTy &FuncGPStoreInfo = ModuleGPStoreInfo[FuncCGNodeMap[F]];
   for (auto &BBI : F->getBasicBlockList()) {
     BasicBlock *BB = &BBI;
     for (auto &InstI : BB->getInstList()) {
@@ -5663,8 +5664,14 @@ void SoftBoundCETSPass::calculateMTECostForFunc(Function *F) {
       if (LoadInst* ldi = dyn_cast<LoadInst>(insn))
         pointer_operand = ldi->getPointerOperand();
 
-      if (StoreInst* sti = dyn_cast<StoreInst>(insn))
+      if (StoreInst* sti = dyn_cast<StoreInst>(insn)) {
         pointer_operand = sti->getOperand(1);
+        if (isa<Constant>(pointer_operand)) {
+          GlobalVariable *GP = cast<GlobalVariable>(pointer_operand->stripInBoundsConstantOffsets());
+          if (GPStoreCand.count(GP))
+            FuncGPStoreInfo[GP].Cost += BlockFreq[BB];
+        }
+      }
 
       if(GLOBALCONSTANTOPT && isa<Constant>(pointer_operand))
         continue;
@@ -5680,6 +5687,8 @@ void SoftBoundCETSPass::calculateMTECostForFunc(Function *F) {
       if (LoadInst *LI = dyn_cast<LoadInst>(Root)) {
         Value *GlobalPtr = LI->getPointerOperand();
         if (isa<GlobalVariable>(GlobalPtr)) {
+          if (!GPStoreCand.count(cast<GlobalVariable>(GlobalPtr)))
+            continue;
           FuncMTEInfoTy &FuncGlobalPtrInfo = ModuleGlobalPtrInfo[FuncCGNodeMap[F]];
           if (!FuncGlobalPtrInfo.count(GlobalPtr)) {
             FuncGlobalPtrInfo[GlobalPtr].Root = GlobalPtr;
@@ -5687,6 +5696,8 @@ void SoftBoundCETSPass::calculateMTECostForFunc(Function *F) {
           }
           FuncGlobalPtrInfo[GlobalPtr].Cost += BlockFreq[BB];
           continue;
+        } else {
+          assert(!isa<Constant>(Root));
         }
       }
 
@@ -5701,6 +5712,7 @@ void SoftBoundCETSPass::calculateFinalMTECost(MTECGNode *N) {
   for (auto *F : N->Functions) {
     for (auto &BBI : F->getBasicBlockList()) {
       BasicBlock *BB = &BBI;
+      assert(BlockFreq.count(BB));
       for (auto &InstI : BB->getInstList()) {
         Instruction *Inst = &InstI;
         CallInst *CI = dyn_cast<CallInst>(Inst);
@@ -5732,10 +5744,17 @@ void SoftBoundCETSPass::calculateFinalMTECost(MTECGNode *N) {
         if (!MTECostAvailable.count(CalleeN))
           calculateFinalMTECost(CalleeN);
 
+        FuncGPStoreInfoTy &FuncGPStoreInfo = ModuleGPStoreInfo[FuncCGNodeMap[F]];
+        FuncGPStoreInfoTy &CalleeGPStoreInfo = ModuleGPStoreInfo[CalleeN];
+        for (auto &I : CalleeGPStoreInfo) {
+          assert(GPStoreCand.count(I.first));
+          FuncGPStoreInfo[I.first].Cost += I.second.Cost * BlockFreq[BB];
+        }
+
         FuncMTEInfoTy &FuncMTEInfo = ModuleMTEInfo[FuncCGNodeMap[F]];
         FuncMTEInfoTy &CalleeMTEInfo = ModuleMTEInfo[CalleeN];
-        for (auto R : CalleeMTEInfo) {
-          Value *Root = R.first;
+        for (auto &I : CalleeMTEInfo) {
+          Value *Root = I.first;
           if (isa<Argument>(Root) && !CalleeN->isRecursive) { // TODO: handle recursive functions
             int i = 0;
             for (Argument &Arg : Callee->args()) {
@@ -5749,7 +5768,7 @@ void SoftBoundCETSPass::calculateFinalMTECost(MTECGNode *N) {
             Value *ActualRoot = PtrRootMap[ActualArg];
             if (!FuncMTEInfo.count(ActualRoot))
               FuncMTEInfo[ActualRoot].Root = ActualRoot;
-            FuncMTEInfo[ActualRoot].Cost += CalleeMTEInfo[Root].Cost * BlockFreq[BB];
+            FuncMTEInfo[ActualRoot].Cost += I.second.Cost * BlockFreq[BB];
             RootArgMap[ActualRoot].insert(cast<Argument>(Root));
             continue;
           }
@@ -5757,17 +5776,16 @@ void SoftBoundCETSPass::calculateFinalMTECost(MTECGNode *N) {
           if (isa<Constant>(Root)) {
             if (!FuncMTEInfo.count(Root))
               FuncMTEInfo[Root].Root = Root;
-            assert(BlockFreq.count(BB));
-            FuncMTEInfo[Root].Cost += CalleeMTEInfo[Root].Cost * BlockFreq[BB];
+            FuncMTEInfo[Root].Cost += I.second.Cost * BlockFreq[BB];
             continue;
           }
         }
 
         FuncMTEInfoTy &FuncGlobalPtrInfo = ModuleGlobalPtrInfo[FuncCGNodeMap[F]];
         FuncMTEInfoTy &CalleeGlobalPtrInfo = ModuleGlobalPtrInfo[CalleeN];
-        for (auto R : CalleeGlobalPtrInfo) {
-          Value *GlobalPtr = R.first;
-
+        for (auto &I : CalleeGlobalPtrInfo) {
+          Value *GlobalPtr = I.first;
+          assert(GPStoreCand.count(cast<GlobalVariable>(GlobalPtr)));
           if (!FuncGlobalPtrInfo.count(GlobalPtr)) {
             FuncGlobalPtrInfo[GlobalPtr].Root = GlobalPtr;
             FuncGlobalPtrInfo[GlobalPtr].isGlobalPtr = true;
@@ -5793,6 +5811,7 @@ void SoftBoundCETSPass::cancelTagAssignment(MTECGNode *N, Value *Root) {
 
 const int MTE_SIZE_PENALTY = 2; // Per byte
 const int MTE_SIZE_UNKNOWN = 4096; // Bytes
+const double MTE_GPSTORE_FREQ_THRESHOLD = 30;
 
 double SoftBoundCETSPass::getColoringOverhead(const DataLayout &DL, Value *Root) {
   unsigned int Size;
@@ -5816,19 +5835,24 @@ void SoftBoundCETSPass::assignTagsTopDown(const DataLayout &DL, MTECGNode *N, MT
     dbgs() << F->getName() << " ";
   dbgs() << '\n';
 
-  FuncMTEInfoTy &FuncMTEInfo = ModuleMTEInfo[N];
   FuncMTEInfoTy *ParentMTEInfo = NULL;
   if (Parent)
     ParentMTEInfo = &ModuleMTEInfo[Parent];
 
   MTEInfoSortedTy MTEInfoSorted;
+  FuncMTEInfoTy &FuncMTEInfo = ModuleMTEInfo[N];
   for (auto &I : FuncMTEInfo) {
     Value *Root = I.first;
     double Cost = I.second.Cost - getColoringOverhead(DL, Root);
     MTEInfoSorted.insert(std::pair<double, MTEInfo*>(Cost, &I.second));
   }
 
-  for (auto &I : ModuleGlobalPtrInfo[N]) {
+  FuncMTEInfoTy &FuncGlobalPtrInfo = ModuleGlobalPtrInfo[N];
+  for (auto &I : FuncGlobalPtrInfo) {
+    GlobalVariable *GPRoot = cast<GlobalVariable>(I.first->stripInBoundsConstantOffsets());
+    FuncGPStoreInfoTy &MainFuncGPStoreInfo = ModuleGPStoreInfo[FuncCGNodeMap[MainFunc]];
+    if ( MainFuncGPStoreInfo[GPRoot].Cost <= MTE_GPSTORE_FREQ_THRESHOLD)
+      continue;
     double Cost = I.second.Cost - MTE_SIZE_UNKNOWN * MTE_SIZE_PENALTY;
     MTEInfoSorted.insert(std::pair<double, MTEInfo*>(Cost, &I.second));
   }
@@ -5974,7 +5998,26 @@ bool SoftBoundCETSPass::runOnModule(Module& module) {
     }
     assert(AddressTakenFuncs.size() < 2);
 
-    Function *MainFunc = module.getFunction("softboundcets_pseudo_main");
+    for (auto &G : module.globals()) {
+      if (!cast<PointerType>(G.getType())->getElementType()->isPointerTy())
+        continue;
+
+      bool IsGPStoreCand = true;
+      for (User *U : G.users()) {
+        if (isa<ConstantExpr>(U)) {
+          for (User *U2 : U->users())
+            assert(isa<StoreInst>(U2) || isa<LoadInst>(U2));
+          continue;
+        }
+        assert(isa<StoreInst>(U) || isa<LoadInst>(U) || isa<CallInst>(U));
+        if (isa<CallInst>(U))
+          IsGPStoreCand = false;
+      }
+      if (IsGPStoreCand)
+        GPStoreCand.insert(&G);
+    }
+
+    MainFunc = module.getFunction("softboundcets_pseudo_main");
     assert(MainFunc && "No main in this module?");
     SmallVector<Function *, 16> CallStack;
     buildMTECallGraph(MainFunc, CallStack);
@@ -6101,10 +6144,23 @@ bool SoftBoundCETSPass::runOnModule(Module& module) {
     if (ENABLE_MTE && FuncCGNodeMap[func_ptr]->mayNeedRecoloring) {
 #if 1
       for (auto &I : ModuleMTEInfo[FuncCGNodeMap[func_ptr]]) {
-        if (!I.second.NeedColoringCode)
+        Value *Root = I.first;
+        bool NeedColoring = I.second.NeedColoringCode;
+        // See if this is a load from global pointer
+        if (LoadInst *LI = dyn_cast<LoadInst>(Root)) {
+          Value *GPRoot = LI->getPointerOperand()->stripInBoundsConstantOffsets();
+          if (isa<Constant>(GPRoot)) {
+            MTEInfo &Info = ModuleGlobalPtrInfo[FuncCGNodeMap[func_ptr]][GPRoot];
+            if (Info.NeedColoringCode)
+              NeedColoring = true;;
+            assert(!Info.ColoringDone);
+            Info.ColoringDone = true;
+          }
+        }
+
+        if (!NeedColoring)
           continue;
 
-        Value *Root = I.first;
         Value* tmp_base = NULL, *tmp_bound = NULL;
         Instruction *InsertPos;
         if (Constant* given_constant = dyn_cast<Constant>(Root)) {

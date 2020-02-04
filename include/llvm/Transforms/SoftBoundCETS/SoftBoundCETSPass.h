@@ -287,6 +287,10 @@ class SoftBoundCETSPass: public ModulePass {
     int TagNum;
   };
 
+  struct GPStoreInfo {
+    double Cost;
+  };
+
   struct MTECGNode {
     SmallPtrSet<Function *, 4> Functions;
     SmallPtrSet<MTECGNode *, 8> Callees;
@@ -296,15 +300,20 @@ class SoftBoundCETSPass: public ModulePass {
     bool TaggingDone;
   };
 
+  Function *MainFunc;
+
   SmallPtrSet<Function *, 4> AddressTakenFuncs;
+  SmallPtrSet<GlobalVariable *, 16> GPStoreCand;
   DenseMap<Function *, MTECGNode *> FuncCGNodeMap;
   DenseMap<Value *, Value *> PtrRootMap;
   DenseMap<BasicBlock *, double> BlockFreq;
   DenseMap<Value *, SmallPtrSet<Argument *, 8> > RootArgMap;
 
-  typedef DenseMap<Value *, MTEInfo > FuncMTEInfoTy;
+  typedef DenseMap<Value *, MTEInfo> FuncMTEInfoTy;
+  typedef DenseMap<GlobalVariable *, GPStoreInfo> FuncGPStoreInfoTy;
   typedef std::multimap<double, MTEInfo*, std::greater<double> > MTEInfoSortedTy;
   DenseMap<MTECGNode *, FuncMTEInfoTy>  ModuleMTEInfo;
+  DenseMap<MTECGNode *, FuncGPStoreInfoTy> ModuleGPStoreInfo;
   DenseMap<MTECGNode *, FuncMTEInfoTy>  ModuleGlobalPtrInfo;
 
   SmallPtrSet<MTECGNode *, 32> MTECostAvailable;
