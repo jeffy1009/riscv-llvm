@@ -278,7 +278,6 @@ class SoftBoundCETSPass: public ModulePass {
   /* MTE related data structures */
   struct MTEInfo {
     Value *Root;
-    Loop *Range;
     double Cost;
     bool TagAssigned;
     bool ColoringDone;
@@ -329,9 +328,6 @@ class SoftBoundCETSPass: public ModulePass {
   void buildMTECallGraph(Function *F, SmallVectorImpl<Function *> &Stack);
   void analyzePtrRoots(Function *F);
   void saveBlockFreq(Function *F);
-  void printFuncMTEInfo(FuncMTEInfoTy &FuncMTEInfo);
-  void printMTEInfoSorted(MTEInfoSortedTy &MTEInfoSorted);
-  bool findRange(Value *Root, BasicBlock *BB, Loop *&Range);
   void calculateMTECostForFunc(Function *F);
   void calculateFinalMTECost(MTECGNode *N);
   void cancelTagAssignment(MTECGNode *N, Value *Root);

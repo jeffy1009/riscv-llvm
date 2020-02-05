@@ -5598,65 +5598,6 @@ void SoftBoundCETSPass::saveBlockFreq(Function *F) {
     BlockFreq[BB] = BFI->getBlockFreq(BB).getFrequency() / (double)BFI->getEntryFreq();
   }
 }
-#if 0
-void SoftBoundCETSPass::printFuncMTEInfo(FuncMTEInfoTy &FuncMTEInfo) {
-  MTEInfoSortedTy MTEInfoSorted;
-  for (auto I : FuncMTEInfo)
-    MTEInfoSorted.insert(std::pair<double, MTEInfo>(I.second.Cost, I.second));
-
-  printMTEInfoSorted(MTEInfoSorted);
-}
-
-void SoftBoundCETSPass::printMTEInfoSorted(MTEInfoSortedTy &MTEInfoSorted) {
-  for (auto I : MTEInfoSorted) {
-    Value *V = I.second.Root;
-    V->dump();
-    dbgs() << "Cost: " << I.first;
-    if (I.second.isGlobalPtr) dbgs() << " GlobalPtr";
-    dbgs() << '\n';
-  }
-}
-#endif
-bool SoftBoundCETSPass::findRange(Value *Root, BasicBlock *BB, Loop *&Range) {
-  Loop *L = LI->getLoopFor(BB);
-  Loop *RootLoop;
-  if (isa<Argument>(Root) || isa<Constant>(Root)) {
-    RootLoop = NULL;
-    Range = NULL;
-    return true;
-  } else {
-    // skip if access is not in the loop, and the definition is not global
-    // or argument
-    if (!L)
-      return false;
-
-    assert(isa<Instruction>(Root));
-    BasicBlock *RootBB = cast<Instruction>(Root)->getParent();
-    RootLoop = LI->getLoopFor(RootBB);
-
-    // RootLoop does not always contain BB. see huft_build of gzip
-    while (RootLoop && !RootLoop->contains(BB))
-      RootLoop = RootLoop->getParentLoop();
-
-    // Pointer is defined in the loop
-    if (RootLoop == L)
-      return false;
-  }
-
-  Loop *CurLoop = L;
-  if (CurLoop) {
-    while (Loop *ParLoop = CurLoop->getParentLoop()) {
-      if (RootLoop == ParLoop)
-        break;
-
-      CurLoop = ParLoop;
-    }
-  }
-
-  // CurLoop = NULL means Root = argument or global
-  Range = CurLoop;
-  return true;
-}
 
 void SoftBoundCETSPass::calculateMTECostForFunc(Function *F) {
   // Functions not in the call graph. e.g) interrupt handling function
@@ -5690,10 +5631,6 @@ void SoftBoundCETSPass::calculateMTECostForFunc(Function *F) {
 
       assert(PtrRootMap.count(pointer_operand));
       Value *Root = PtrRootMap[pointer_operand];
-
-      // Loop *Range;
-      // if (!findRange(Root, BB, Range))
-      //   continue;
 
       assert(BlockFreq.count(BB));
       if (LoadInst *LI = dyn_cast<LoadInst>(Root)) {
@@ -5973,25 +5910,12 @@ bool SoftBoundCETSPass::runOnModule(Module& module) {
   temporal_safety = false; // gykim spatial
 
   auto &TD = module.getDataLayout();
-  //TD = &getAnalysis<DataLayout>();
-  //TLI = &getAnalysis<TargetLibraryInfoWrapperPass>().getTLI();
-  //TLI = &getAnalysis<TargetLibraryInfo>();
-
   BuilderTy TheBuilder(module.getContext(), TargetFolder(TD));
-
   Builder = &TheBuilder;
-
-  //Blacklist.reset(SpecialCaseList::createOrDie(BlacklistFile));
-
 
   if(disable_spatial_safety){
     spatial_safety = false;
   }
-
-  // gykim spatial
-  // if(disable_temporal_safety){
-  //   temporal_safety = false;
-  // }
 
   if (module.getDataLayout().getPointerSizeInBits() == 64) {
     m_is_64_bit = true;
@@ -6065,64 +5989,6 @@ bool SoftBoundCETSPass::runOnModule(Module& module) {
     calculateFinalMTECost(MainFuncCGN);
 
     assignTagsTopDown(module.getDataLayout(), MainFuncCGN, NULL);
-
-#if 0
-    // Sort according to the cost (descending order)
-    MTEInfoSortedTy MTEInfoSorted;
-    for (auto CGNI : FuncCGNodeMap)
-      for (auto I : ModuleMTEInfo[CGNI.second])
-        if (!isa<Constant>(I.first) && I.second.Cost > MTE_THRESHOLD)
-          MTEInfoSorted.insert(std::pair<double, MTEInfo>(I.second.Cost, I.second));
-
-    for (auto I : ModuleMTEInfo[FuncCGNodeMap[MainFunc]])
-      if (isa<Constant>(I.first) && I.second.Cost > MTE_THRESHOLD)
-        MTEInfoSorted.insert(std::pair<double, MTEInfo>(I.second.Cost, I.second));
-
-    for (auto I : ModuleGlobalPtrInfo[FuncCGNodeMap[MainFunc]])
-      if (I.second.Cost > MTE_THRESHOLD)
-        MTEInfoSorted.insert(std::pair<double, MTEInfo>(I.second.Cost, I.second));
-
-    // Assign Tags
-    // initialize data structure for NUM_TAGS tags
-    // const int NUM_TAGS = 15;
-    // const int NUM_TAGS = 3;
-    // SmallVector<SmallPtrSet<Loop *, 4>, 16> TagStatus(NUM_TAGS);
-    const int NUM_TAGGED_OBJS = 15;
-    int i = 0;
-    FuncMTEInfoTy &MainFuncMTEInfo = ModuleMTEInfo[FuncCGNodeMap[MainFunc]];
-    FuncMTEInfoTy &MainFuncGlobalPtrInfo = ModuleGlobalPtrInfo[FuncCGNodeMap[MainFunc]];
-    for (auto I : MTEInfoSorted) {
-      if (i++ < NUM_TAGGED_OBJS) {
-        Value *Root = I.second.Root;
-        if (I.second.isGlobalPtr) {
-          MainFuncGlobalPtrInfo[Root].TagAssigned = true;
-          continue;
-        }
-
-        if (isa<Constant>(Root))
-          MainFuncMTEInfo[Root].TagAssigned = true;
-
-        if (Argument *Arg = dyn_cast<Argument>(Root))
-          ModuleMTEInfo[FuncCGNodeMap[Arg->getParent()]][Arg].TagAssigned = true;
-
-        if (Instruction *Inst = dyn_cast<Instruction>(Root))
-          ModuleMTEInfo[FuncCGNodeMap[Inst->getFunction()]][Inst].TagAssigned = true;
-
-        SmallVector<Value *, 8> WorkList;
-        WorkList.push_back(Root);
-        while (!WorkList.empty()) {
-          Value *Entry = WorkList.pop_back_val();
-          if (!RootArgMap.count(Entry))
-            continue;
-
-          for (Argument *Arg : RootArgMap[Entry]) {
-            ModuleMTEInfo[FuncCGNodeMap[Arg->getParent()]][Arg].TagAssigned = true;
-            WorkList.push_back(Arg);
-          }
-        }
-      }
-    }
-#endif
   }
 
   for(Module::iterator ff_begin = module.begin(), ff_end = module.end();
