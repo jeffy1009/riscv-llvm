@@ -5792,14 +5792,17 @@ double SoftBoundCETSPass::getColoringOverhead(const DataLayout &DL, Value *Root)
 }
 
 void SoftBoundCETSPass::assignTagsTopDown(const DataLayout &DL, MTECGNode *N, MTECGNode *Parent) {
-  dbgs() << "Assigning tags for node " << N << ": ";
+  dbgs() << "========= Assigning tags for node " << N << ": ";
   for (Function *F : N->Functions)
     dbgs() << F->getName() << " ";
   dbgs() << '\n';
 
   FuncMTEInfoTy *ParentMTEInfo = NULL;
-  if (Parent)
+  FuncMTEInfoTy *ParentGlobalPtrInfo = NULL;
+  if (Parent) {
     ParentMTEInfo = &ModuleMTEInfo[Parent];
+    ParentGlobalPtrInfo = &ModuleGlobalPtrInfo[Parent];
+  }
 
   MTEInfoSortedTy MTEInfoSorted;
   FuncMTEInfoTy &FuncMTEInfo = ModuleMTEInfo[N];
@@ -5821,59 +5824,124 @@ void SoftBoundCETSPass::assignTagsTopDown(const DataLayout &DL, MTECGNode *N, MT
 
   int i = 0;
   bool TagNumArray[16] = {false};
-  SmallPtrSet<MTEInfo*, 8> Temp;
-  MTEInfoSortedTy::iterator I = MTEInfoSorted.begin(), E = MTEInfoSorted.end();
-  for (; I != E && i < 15; ++I, ++i) {  // Select 15 objects
+  SmallVector<MTEInfo*, 8> Temp;
+  for (MTEInfoSortedTy::iterator I = MTEInfoSorted.begin(), E = MTEInfoSorted.end();
+       I != E && i < 15; ++I, ++i) {  // Select 15 objects
     MTEInfo *CurInfo = (*I).second;
     Value *Root = CurInfo->Root;
     double Cost = (*I).first;
 
-    if (isa<Constant>(Root) && Cost > MTE_THRESHOLD && N->Callees.empty())
-      assert(ParentMTEInfo && ParentMTEInfo->count(Root) && ParentMTEInfo->lookup(Root)->TagAssigned);
-    if (isa<Constant>(Root)
-        && ParentMTEInfo && ParentMTEInfo->count(Root) && ParentMTEInfo->lookup(Root)->TagAssigned) {
-      int TagNum = ParentMTEInfo->lookup(Root)->TagNum;
-      CurInfo->TagNum = TagNum;
-      TagNumArray[TagNum] = true;
-    } else if (Cost > MTE_THRESHOLD) {
-      Temp.insert(CurInfo);
-      dbgs() << "[New] ";
-    } else {
-      continue;
+    bool AssignTag = false;
+    if (isa<Constant>(Root)) {
+      if (!CurInfo->isGlobalPtr) {
+        if (Cost > MTE_THRESHOLD && N->Callees.empty())
+          assert(ParentMTEInfo && ParentMTEInfo->count(Root) && ParentMTEInfo->lookup(Root)->TagAssigned);
+        if (ParentMTEInfo && ParentMTEInfo->count(Root) && ParentMTEInfo->lookup(Root)->TagAssigned) {
+          int TagNum = ParentMTEInfo->lookup(Root)->TagNum;
+          CurInfo->TagNum = TagNum;
+          assert(!TagNumArray[TagNum]);
+          TagNumArray[TagNum] = true;
+          AssignTag = true;
+        }
+      } else {
+        if (ParentGlobalPtrInfo && ParentGlobalPtrInfo->count(Root)
+            && ParentGlobalPtrInfo->lookup(Root)->TagAssigned) {
+          int TagNum = ParentGlobalPtrInfo->lookup(Root)->TagNum;
+          CurInfo->TagNum = TagNum;
+          assert(!TagNumArray[TagNum]);
+          TagNumArray[TagNum] = true;
+          AssignTag = true;
+        }
+      }
+    }
+
+    if (isa<Argument>(Root) && ParentMTEInfo) {
+      Value *ArgRoot = NULL;
+      for (auto &PI : *ParentMTEInfo) {
+        Value *ParentRoot = PI.first;
+        if (RootArgMap.count(ParentRoot)) {
+          for (Argument *Arg : RootArgMap[ParentRoot])
+            if (Arg == Root)
+              ArgRoot = ParentRoot;
+        }
+      }
+      if (ArgRoot && ParentMTEInfo->lookup(ArgRoot)->TagAssigned) {
+        int TagNum = ParentMTEInfo->lookup(ArgRoot)->TagNum;
+        CurInfo->TagNum = TagNum;
+        assert(!TagNumArray[TagNum]);
+        TagNumArray[TagNum] = true;
+        AssignTag = true;
+      }
+    }
+
+    if (!AssignTag) {
+      if (Cost > MTE_THRESHOLD)
+        Temp.push_back(CurInfo);
+      else
+        continue;
     }
 
     CurInfo->TagAssigned = true;
-    Root->dump();
-    dbgs() << "Cost: " << Cost;
-    if (CurInfo->isGlobalPtr) dbgs() << " [GlobalPtr]";
-    dbgs() << '\n';
   }
-
-  // Print tag unassigned global objects
-  dbgs() << "The following objects will be untagged in this function...\n";
-  for (; I != E; ++I) {
-    MTEInfo *CurInfo = (*I).second;
-    Value *Root = CurInfo->Root;
-    double Cost = (*I).first;
-    if (isa<Constant>(Root)
-        && ParentMTEInfo && ParentMTEInfo->count(Root) && ParentMTEInfo->lookup(Root)->TagAssigned) {
-      Root->dump();
-      dbgs() << "Cost: " << Cost;
-      if (CurInfo->isGlobalPtr) dbgs() << " GlobalPtr";
-      dbgs() << '\n';
-    }
-  }
-  dbgs() << '\n';
 
   // Assign tag number for the newly tagged objects
   i = 1;
+  bool NewlyTagged[16] = {false};
   for (MTEInfo *I : Temp) {
     while (TagNumArray[i]) i++;
     assert(i < 16);
     I->TagNum = i;
     I->NeedColoringCode = true;
-    TagNumArray[i] = true;
     N->mayNeedRecoloring = true;
+    NewlyTagged[i] = true;
+    i++;
+  }
+
+  // Print tagged objects
+  i = 0;
+  for (MTEInfoSortedTy::iterator I = MTEInfoSorted.begin(), E = MTEInfoSorted.end();
+       I != E; ++I) {
+    MTEInfo *CurInfo = (*I).second;
+    Value *Root = CurInfo->Root;
+    double Cost = (*I).first;
+    if (!CurInfo->TagAssigned)
+      continue;
+    Root->dump();
+    dbgs() << "    Cost: " << Cost << " Tag: " << CurInfo->TagNum;
+    if (CurInfo->isGlobalPtr) dbgs() << " [GlobalPtr]";
+    if (!TagNumArray[CurInfo->TagNum]) dbgs() << " [New] ";
+    dbgs() << '\n';
+    ++i;
+  }
+  dbgs() << '\n';
+  assert(i < 16);
+
+  // Print tag unassigned global objects
+  if (Parent) {
+    dbgs() << "The following objects will be untagged in this function...\n";
+    for (auto &I : *ParentMTEInfo) {
+      MTEInfo *CurInfo = I.second;
+      Value *Root = CurInfo->Root;
+      if (CurInfo->TagAssigned && NewlyTagged[CurInfo->TagNum]
+          && (!FuncMTEInfo.count(Root) || !FuncMTEInfo[Root]->TagAssigned)) {
+        double Cost = FuncMTEInfo.count(Root) ?
+          FuncMTEInfo[Root]->Cost - getColoringOverhead(DL, Root) : 0;
+        Root->dump();
+        dbgs() << "    Cost: " << Cost << '\n';
+      }
+    }
+    for (auto &I : *ParentGlobalPtrInfo) {
+      MTEInfo *CurInfo = I.second;
+      Value *Root = CurInfo->Root;
+      if (CurInfo->TagAssigned && NewlyTagged[CurInfo->TagNum]
+          && (!FuncGlobalPtrInfo.count(Root) || !FuncGlobalPtrInfo[Root]->TagAssigned)) {
+        double Cost = FuncGlobalPtrInfo.count(Root) ?
+          FuncGlobalPtrInfo[Root]->Cost - MTE_SIZE_UNKNOWN * MTE_SIZE_PENALTY : 0;
+        Root->dump();
+        dbgs() << "    Cost: " << Cost  << " [GlobalPtr]\n";
+      }
+    }
+    dbgs() << '\n';
   }
 
   N->TaggingDone = true;
