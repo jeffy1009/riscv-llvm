@@ -3140,6 +3140,18 @@ SoftBoundCETSPass::addLoadStoreChecks(Instruction* load_store,
       mte_bound_check_eliminated++;
       return; //JSSHIN
     }
+
+    if (LoadInst *LI = dyn_cast<LoadInst>(Root)) {
+      Value *GPRoot = LI->getPointerOperand()->stripInBoundsConstantOffsets();
+      if (isa<Constant>(GPRoot)) {
+        FuncMTEInfoTy &FuncGlobalPtrInfo = ModuleGlobalPtrInfo[CGN];
+        if (FuncGlobalPtrInfo.count(GPRoot)
+            && FuncGlobalPtrInfo[GPRoot]->TagAssigned) {
+          mte_bound_check_eliminated++;
+          return;
+        }
+      }
+    }
   }
  cont:
   Value* tmp_base = NULL;
@@ -5864,7 +5876,7 @@ void SoftBoundCETSPass::assignTagsTopDown(const DataLayout &DL, MTECGNode *N, MT
   for (auto &I : FuncGlobalPtrInfo) {
     GlobalVariable *GPRoot = cast<GlobalVariable>(I.first->stripInBoundsConstantOffsets());
     FuncGPStoreInfoTy &MainFuncGPStoreInfo = ModuleGPStoreInfo[FuncCGNodeMap[MainFunc]];
-    if ( MainFuncGPStoreInfo[GPRoot].Cost <= MTE_GPSTORE_FREQ_THRESHOLD)
+    if (MainFuncGPStoreInfo[GPRoot].Cost > MTE_GPSTORE_FREQ_THRESHOLD)
       continue;
     double Cost = I.second->Cost - MTE_SIZE_UNKNOWN * MTE_SIZE_PENALTY;
     MTEInfoSorted.insert(std::pair<double, MTEInfo*>(Cost, I.second));
@@ -5884,7 +5896,7 @@ void SoftBoundCETSPass::assignTagsTopDown(const DataLayout &DL, MTECGNode *N, MT
     if (isa<Constant>(Root)
         && ParentMTEInfo && ParentMTEInfo->count(Root) && ParentMTEInfo->lookup(Root)->TagAssigned) {
       int TagNum = ParentMTEInfo->lookup(Root)->TagNum;
-      FuncMTEInfo[Root]->TagNum = TagNum;
+      CurInfo->TagNum = TagNum;
       TagNumArray[TagNum] = true;
     } else if (Cost > MTE_THRESHOLD) {
       Temp.insert(CurInfo);
@@ -5893,7 +5905,7 @@ void SoftBoundCETSPass::assignTagsTopDown(const DataLayout &DL, MTECGNode *N, MT
       continue;
     }
 
-    FuncMTEInfo[Root]->TagAssigned = true;
+    CurInfo->TagAssigned = true;
     Root->dump();
     dbgs() << "Cost: " << Cost;
     if (CurInfo->isGlobalPtr) dbgs() << " [GlobalPtr]";
@@ -6154,16 +6166,18 @@ bool SoftBoundCETSPass::runOnModule(Module& module) {
     gatherBaseBoundPass2(func_ptr);
     addDereferenceChecks(func_ptr);
 
-    if (ENABLE_MTE && FuncCGNodeMap[func_ptr]->mayNeedRecoloring) {
+    MTECGNode *CGN = FuncCGNodeMap[func_ptr];
+    if (ENABLE_MTE && CGN->mayNeedRecoloring) {
 #if 1
-      for (auto &I : ModuleMTEInfo[FuncCGNodeMap[func_ptr]]) {
+      for (auto &I : ModuleMTEInfo[CGN]) {
         Value *Root = I.first;
         bool NeedColoring = I.second->NeedColoringCode;
         // See if this is a load from global pointer
         if (LoadInst *LI = dyn_cast<LoadInst>(Root)) {
           Value *GPRoot = LI->getPointerOperand()->stripInBoundsConstantOffsets();
-          if (isa<Constant>(GPRoot)) {
-            MTEInfo *Info = ModuleGlobalPtrInfo[FuncCGNodeMap[func_ptr]][GPRoot];
+          FuncMTEInfoTy &FuncGlobalPtrInfo = ModuleGlobalPtrInfo[CGN];
+          if (isa<Constant>(GPRoot) && FuncGlobalPtrInfo.count(GPRoot)) {
+            MTEInfo *Info = FuncGlobalPtrInfo[GPRoot];
             if (Info->NeedColoringCode)
               NeedColoring = true;;
             assert(!Info->ColoringDone);
