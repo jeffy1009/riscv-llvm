@@ -5838,6 +5838,7 @@ void SoftBoundCETSPass::assignTagsTopDown(const DataLayout &DL, MTECGNode *N, MT
           assert(ParentMTEInfo && ParentMTEInfo->count(Root) && ParentMTEInfo->lookup(Root)->TagAssigned);
         if (ParentMTEInfo && ParentMTEInfo->count(Root) && ParentMTEInfo->lookup(Root)->TagAssigned) {
           int TagNum = ParentMTEInfo->lookup(Root)->TagNum;
+          assert(TagNum);
           CurInfo->TagNum = TagNum;
           assert(!TagNumArray[TagNum]);
           TagNumArray[TagNum] = true;
@@ -5847,6 +5848,7 @@ void SoftBoundCETSPass::assignTagsTopDown(const DataLayout &DL, MTECGNode *N, MT
         if (ParentGlobalPtrInfo && ParentGlobalPtrInfo->count(Root)
             && ParentGlobalPtrInfo->lookup(Root)->TagAssigned) {
           int TagNum = ParentGlobalPtrInfo->lookup(Root)->TagNum;
+          assert(TagNum);
           CurInfo->TagNum = TagNum;
           assert(!TagNumArray[TagNum]);
           TagNumArray[TagNum] = true;
@@ -5867,6 +5869,7 @@ void SoftBoundCETSPass::assignTagsTopDown(const DataLayout &DL, MTECGNode *N, MT
       }
       if (ArgRoot && ParentMTEInfo->lookup(ArgRoot)->TagAssigned) {
         int TagNum = ParentMTEInfo->lookup(ArgRoot)->TagNum;
+        assert(TagNum);
         CurInfo->TagNum = TagNum;
         assert(!TagNumArray[TagNum]);
         TagNumArray[TagNum] = true;
@@ -6104,24 +6107,10 @@ bool SoftBoundCETSPass::runOnModule(Module& module) {
     if (ENABLE_MTE && CGN->mayNeedRecoloring) {
 #if 1
       for (auto &I : ModuleMTEInfo[CGN]) {
-        Value *Root = I.first;
-        bool NeedColoring = I.second->NeedColoringCode;
-        // See if this is a load from global pointer
-        if (LoadInst *LI = dyn_cast<LoadInst>(Root)) {
-          Value *GPRoot = LI->getPointerOperand()->stripInBoundsConstantOffsets();
-          FuncMTEInfoTy &FuncGlobalPtrInfo = ModuleGlobalPtrInfo[CGN];
-          if (isa<Constant>(GPRoot) && FuncGlobalPtrInfo.count(GPRoot)) {
-            MTEInfo *Info = FuncGlobalPtrInfo[GPRoot];
-            if (Info->NeedColoringCode)
-              NeedColoring = true;;
-            assert(!Info->ColoringDone);
-            Info->ColoringDone = true;
-          }
-        }
-
-        if (!NeedColoring)
+        if (!I.second->NeedColoringCode)
           continue;
 
+        Value *Root = I.first;
         Value* tmp_base = NULL, *tmp_bound = NULL;
         Instruction *InsertPos;
         if (Constant* given_constant = dyn_cast<Constant>(Root)) {
@@ -6139,6 +6128,34 @@ bool SoftBoundCETSPass::runOnModule(Module& module) {
         args.push_back(castToVoidPtr(tmp_bound, InsertPos));
         args.push_back(ConstantInt::get(Type::getInt32Ty(module.getContext()), I.second->TagNum));
         setNearestDbgLoc(CallInst::Create(m_mte_color_tag, args, "", InsertPos), InsertPos);
+      }
+      // mte_color_tag for global pointers
+      FuncMTEInfoTy &FuncGlobalPtrInfo = ModuleGlobalPtrInfo[CGN];
+      for (auto &BBI : func_ptr->getBasicBlockList()) {
+        for (auto &InstI : BBI.getInstList()) {
+          LoadInst *LI = dyn_cast<LoadInst>(&InstI);
+          if (!LI) continue;
+          GlobalVariable *GV =
+            dyn_cast<GlobalVariable>(LI->getPointerOperand()->stripInBoundsConstantOffsets());
+          if (!GV || !FuncGlobalPtrInfo.count(GV))
+            continue;
+          MTEInfo *Info = FuncGlobalPtrInfo[GV];
+          if (!Info->NeedColoringCode)
+            continue;
+          //assert(!Info->ColoringDone);
+          //Info->ColoringDone = true;
+
+          Value *tmp_base = getAssociatedBase(LI);
+          Value *tmp_bound = getAssociatedBound(LI);
+          Instruction *InsertPos = getNextInstruction(cast<Instruction>(tmp_bound));
+          assert(LI->getFunction() == func_ptr);
+
+          SmallVector<Value*, 8> args;
+          args.push_back(castToVoidPtr(tmp_base, InsertPos));
+          args.push_back(castToVoidPtr(tmp_bound, InsertPos));
+          args.push_back(ConstantInt::get(Type::getInt32Ty(module.getContext()), Info->TagNum));
+          setNearestDbgLoc(CallInst::Create(m_mte_color_tag, args, "", InsertPos), InsertPos);
+        }
       }
       for (auto &BBI : func_ptr->getBasicBlockList()) {
         BasicBlock *BB = &BBI;
