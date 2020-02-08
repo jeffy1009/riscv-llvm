@@ -318,7 +318,7 @@ RISCVTargetLowering::RISCVTargetLowering(const TargetMachine &tm,
       setOperationAction(ISD::FADD, VT, Legal);
       setOperationAction(ISD::FSUB, VT, Legal);
       setOperationAction(ISD::FMUL, VT, Legal);
-      setOperationAction(ISD::FDIV, VT, Legal);
+      setOperationAction(ISD::FDIV, VT, Expand);
       //TODO: once implemented in InstrInfo uncomment
       setOperationAction(ISD::FSQRT, VT, Expand);
 
