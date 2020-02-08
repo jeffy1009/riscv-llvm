@@ -245,6 +245,9 @@ char SoftBoundCETSPass:: ID = 0;
 
 // Assign nearest debug info. LLVM will sometimes complain if we don't do this.
 static void setNearestDbgLoc(Instruction *Inst, Instruction *InstDL, bool Upward=false) {
+  if (!Inst->getFunction()->getSubprogram())
+    return;
+
   if (Upward) {
     BasicBlock *BB = InstDL->getParent();
     while(1) {
@@ -1884,7 +1887,8 @@ SoftBoundCETSPass:: introduceShadowStackDeallocation(InvokeInst* call_inst,
   if(pointer_args_return == 0)
     return;
   SmallVector<Value*, 8> args;
-  setNearestDbgLoc(CallInst::Create(m_shadow_stack_deallocate, args, "", insert_at),insert_at);
+  setNearestDbgLoc(CallInst::Create(m_shadow_stack_deallocate, args, "", insert_at),
+                   insert_at,true);
 }
 
 void
@@ -1895,8 +1899,8 @@ SoftBoundCETSPass:: introduceShadowStackDeallocation(CallInst* call_inst,
   if(pointer_args_return == 0)
     return;
   SmallVector<Value*, 8> args;
-  setNearestDbgLoc(CallInst::Create(m_shadow_stack_deallocate, args, "", insert_at),insert_at);
-
+  setNearestDbgLoc(CallInst::Create(m_shadow_stack_deallocate, args, "", insert_at),
+                   insert_at,true);
 }
 
 //
