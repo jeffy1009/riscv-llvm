@@ -5489,6 +5489,7 @@ void SoftBoundCETSPass::buildMTECallGraph(Function *F, SmallVectorImpl<Function 
         assert(FuncCGNodeMap[*It] == CGN);
       FuncCGNodeMap[*It] = CGN;
       CGN->Functions.insert(*It);
+      assert(!AddressTakenFuncs.count(*It));
       ++It;
     }
 
@@ -5682,83 +5683,90 @@ void SoftBoundCETSPass::calculateFinalMTECost(MTECGNode *N) {
         if (CI->isInlineAsm())
           continue;
 
-        Function *Callee = CI->getCalledFunction();
-        if (!Callee) {
+        Function *CallF = CI->getCalledFunction();
+        SmallVector<Function *, 8> FuncsToVisit;
+        if (!CallF) {
           Value *Stripped = CI->getCalledValue()->stripPointerCasts();
-          if (isa<Function>(Stripped))
+          if (isa<Function>(Stripped)) {
             assert(cast<Function>(Stripped)->isDeclaration());
-          // TODO handle indirect call using AddressTakenFuncs
-          continue;
-        }
-
-        if (!checkIfFunctionOfInterest(Callee))
-          continue;
-
-        assert(FuncCGNodeMap.count(Callee));
-        MTECGNode *CalleeN = FuncCGNodeMap[Callee];
-
-        // Avoid infinite loop due to recursive func
-        if (CalleeN == N)
-          continue;
-
-        if (!MTECostAvailable.count(CalleeN))
-          calculateFinalMTECost(CalleeN);
-
-        FuncGPStoreInfoTy &FuncGPStoreInfo = ModuleGPStoreInfo[FuncCGNodeMap[F]];
-        FuncGPStoreInfoTy &CalleeGPStoreInfo = ModuleGPStoreInfo[CalleeN];
-        for (auto &I : CalleeGPStoreInfo) {
-          assert(GPStoreCand.count(I.first));
-          FuncGPStoreInfo[I.first].Cost += I.second.Cost * BlockFreq[BB];
-        }
-
-        FuncMTEInfoTy &FuncMTEInfo = ModuleMTEInfo[FuncCGNodeMap[F]];
-        FuncMTEInfoTy &CalleeMTEInfo = ModuleMTEInfo[CalleeN];
-        for (auto &I : CalleeMTEInfo) {
-          Value *Root = I.first;
-          if (isa<Argument>(Root) && !CalleeN->isRecursive) { // TODO: handle recursive functions
-            int i = 0;
-            for (Argument &Arg : Callee->args()) {
-              if (&Arg == Root)
-                break;
-              i++;
-            }
-
-            Value *ActualArg = CI->getArgOperand(i);
-            assert(PtrRootMap.count(ActualArg));
-            Value *ActualRoot = PtrRootMap[ActualArg];
-            if (!FuncMTEInfo.count(ActualRoot)) {
-              MTEInfo *New = new MTEInfo();
-              New->Root = ActualRoot;
-              FuncMTEInfo[ActualRoot] = New;
-            }
-            FuncMTEInfo[ActualRoot]->Cost += I.second->Cost * BlockFreq[BB];
-            RootArgMap[ActualRoot].insert(cast<Argument>(Root));
             continue;
           }
-
-          if (isa<Constant>(Root)) {
-            if (!FuncMTEInfo.count(Root)) {
-              MTEInfo *New = new MTEInfo();
-              New->Root = Root;
-              FuncMTEInfo[Root] = New;
-            }
-            FuncMTEInfo[Root]->Cost += I.second->Cost * BlockFreq[BB];
+          FuncsToVisit.append(AddressTakenFuncs.begin(), AddressTakenFuncs.end());
+        } else if (checkIfFunctionOfInterest(CallF)) {
+          // Avoid infinite loop due to recursive func
+          if (FuncCGNodeMap[CallF] == N)
             continue;
-          }
+          FuncsToVisit.push_back(CallF);
+        } else {
+          continue;
         }
 
-        FuncMTEInfoTy &FuncGlobalPtrInfo = ModuleGlobalPtrInfo[FuncCGNodeMap[F]];
-        FuncMTEInfoTy &CalleeGlobalPtrInfo = ModuleGlobalPtrInfo[CalleeN];
-        for (auto &I : CalleeGlobalPtrInfo) {
-          Value *GlobalPtr = I.first;
-          assert(GPStoreCand.count(cast<GlobalVariable>(GlobalPtr)));
-          if (!FuncGlobalPtrInfo.count(GlobalPtr)) {
-            MTEInfo *New = new MTEInfo();
-            New->Root = GlobalPtr;
-            New->isGlobalPtr = true;
-            FuncGlobalPtrInfo[GlobalPtr] = New;
+        const int NFuncs = FuncsToVisit.size();
+        for (Function *Callee : FuncsToVisit) {
+          assert(FuncCGNodeMap.count(Callee));
+          MTECGNode *CalleeN = FuncCGNodeMap[Callee];
+
+          assert(CalleeN != N && "Indirect call to self??");
+
+          if (!MTECostAvailable.count(CalleeN))
+            calculateFinalMTECost(CalleeN);
+
+          FuncGPStoreInfoTy &FuncGPStoreInfo = ModuleGPStoreInfo[FuncCGNodeMap[F]];
+          FuncGPStoreInfoTy &CalleeGPStoreInfo = ModuleGPStoreInfo[CalleeN];
+          for (auto &I : CalleeGPStoreInfo) {
+            assert(GPStoreCand.count(I.first));
+            FuncGPStoreInfo[I.first].Cost += I.second.Cost * BlockFreq[BB] / NFuncs;
           }
-          FuncGlobalPtrInfo[GlobalPtr]->Cost += I.second->Cost * BlockFreq[BB];
+
+          FuncMTEInfoTy &FuncMTEInfo = ModuleMTEInfo[FuncCGNodeMap[F]];
+          FuncMTEInfoTy &CalleeMTEInfo = ModuleMTEInfo[CalleeN];
+          for (auto &I : CalleeMTEInfo) {
+            Value *Root = I.first;
+            if (isa<Argument>(Root) && !CalleeN->isRecursive) { // TODO: handle recursive functions
+              int i = 0;
+              for (Argument &Arg : Callee->args()) {
+                if (&Arg == Root)
+                  break;
+                i++;
+              }
+
+              Value *ActualArg = CI->getArgOperand(i);
+              assert(PtrRootMap.count(ActualArg));
+              Value *ActualRoot = PtrRootMap[ActualArg];
+              if (!FuncMTEInfo.count(ActualRoot)) {
+                MTEInfo *New = new MTEInfo();
+                New->Root = ActualRoot;
+                FuncMTEInfo[ActualRoot] = New;
+              }
+              FuncMTEInfo[ActualRoot]->Cost += I.second->Cost * BlockFreq[BB] / NFuncs;
+              RootArgMap[ActualRoot].insert(cast<Argument>(Root));
+              continue;
+            }
+
+            if (isa<Constant>(Root)) {
+              if (!FuncMTEInfo.count(Root)) {
+                MTEInfo *New = new MTEInfo();
+                New->Root = Root;
+                FuncMTEInfo[Root] = New;
+              }
+              FuncMTEInfo[Root]->Cost += I.second->Cost * BlockFreq[BB] / NFuncs;
+              continue;
+            }
+          }
+
+          FuncMTEInfoTy &FuncGlobalPtrInfo = ModuleGlobalPtrInfo[FuncCGNodeMap[F]];
+          FuncMTEInfoTy &CalleeGlobalPtrInfo = ModuleGlobalPtrInfo[CalleeN];
+          for (auto &I : CalleeGlobalPtrInfo) {
+            Value *GlobalPtr = I.first;
+            assert(GPStoreCand.count(cast<GlobalVariable>(GlobalPtr)));
+            if (!FuncGlobalPtrInfo.count(GlobalPtr)) {
+              MTEInfo *New = new MTEInfo();
+              New->Root = GlobalPtr;
+              New->isGlobalPtr = true;
+              FuncGlobalPtrInfo[GlobalPtr] = New;
+            }
+            FuncGlobalPtrInfo[GlobalPtr]->Cost += I.second->Cost * BlockFreq[BB] / NFuncs;
+          }
         }
       }
     }
@@ -6056,11 +6064,16 @@ bool SoftBoundCETSPass::runOnModule(Module& module) {
       Function *F = &I;
       if (!checkIfFunctionOfInterest(F))
         continue;
-      for (const User *U : F->users())
+      for (const User *U : F->users()) {
+        if (isa<ConstantExpr>(U)) {
+          for (const User *U2 : U->users())
+            assert(isa<CallInst>(U2));
+          continue;
+        }
         if (!isa<BlockAddress>(U) && !isa<CallInst>(U))
           AddressTakenFuncs.insert(F);
+      }
     }
-    assert(AddressTakenFuncs.size() < 2);
 
     for (auto &G : module.globals()) {
       if (!cast<PointerType>(G.getType())->getElementType()->isPointerTy())
