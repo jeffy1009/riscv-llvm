@@ -5860,6 +5860,8 @@ void SoftBoundCETSPass::assignTagsTopDown(const DataLayout &DL, MTECGNode *N, MT
           int TagNum = ParentGlobalPtrInfo->lookup(Root)->TagNum;
           assert(TagNum);
           CurInfo->TagNum = TagNum;
+          CurInfo->NeedColoringCode = true;
+          N->mayNeedRecoloring = true;
           assert(!AssignedRoots[TagNum]);
           AssignedRoots[TagNum] = CurInfo;
           AssignTag = true;
@@ -5881,6 +5883,8 @@ void SoftBoundCETSPass::assignTagsTopDown(const DataLayout &DL, MTECGNode *N, MT
         int TagNum = ParentMTEInfo->lookup(ArgRoot)->TagNum;
         assert(TagNum);
         CurInfo->TagNum = TagNum;
+        CurInfo->NeedColoringCode = true;
+        N->mayNeedRecoloring = true;
         assert(!AssignedRoots[TagNum]);
         AssignedRoots[TagNum] = CurInfo;
         AssignTag = true;
@@ -5959,8 +5963,8 @@ void SoftBoundCETSPass::assignTagsTopDown(const DataLayout &DL, MTECGNode *N, MT
   }
 
   N->TaggingDone = true;
-  if (N->Callees.empty())
-    assert(!N->mayNeedRecoloring);
+  // if (N->Callees.empty())
+  //   assert(!N->mayNeedRecoloring);
 
   for (MTECGNode *CalleeN : N->Callees) {
     if (!CalleeN->TaggingDone) {
