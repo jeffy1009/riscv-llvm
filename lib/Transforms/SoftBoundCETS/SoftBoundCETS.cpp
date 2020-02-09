@@ -3135,7 +3135,8 @@ SoftBoundCETSPass::addLoadStoreChecks(Instruction* load_store,
     Value *Root = PtrRootMap[pointer_operand];
 
     Function *F = load_store->getFunction();
-    assert(FuncCGNodeMap.count(F));
+    if (!FuncCGNodeMap.count(F)) // TODO: handle functions called back from external library
+      goto cont;
     MTECGNode *CGN = FuncCGNodeMap[F];
     assert(ModuleMTEInfo.count(CGN));
     FuncMTEInfoTy &FuncMTEInfo = ModuleMTEInfo[CGN];
@@ -6170,7 +6171,7 @@ bool SoftBoundCETSPass::runOnModule(Module& module) {
     addDereferenceChecks(func_ptr);
 
     MTECGNode *CGN = FuncCGNodeMap[func_ptr];
-    if (ENABLE_MTE && CGN->mayNeedRecoloring) {
+    if (ENABLE_MTE && CGN && CGN->mayNeedRecoloring) {
 #if 1
       for (auto &I : ModuleMTEInfo[CGN]) {
         if (!I.second->NeedColoringCode)
