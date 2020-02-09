@@ -5511,18 +5511,24 @@ void SoftBoundCETSPass::buildMTECallGraph(Function *F, SmallVectorImpl<Function 
       if (CI->isInlineAsm())
         continue;
 
-      Function *Callee = CI->getCalledFunction();
-      if (!Callee) {
+      Function *CallF = CI->getCalledFunction();
+      SmallVector<Function *, 8> FuncsToVisit;
+      if (!CallF) {
         Value *Stripped = CI->getCalledValue()->stripPointerCasts();
-        if (isa<Function>(Stripped))
+        if (isa<Function>(Stripped)) {
           assert(cast<Function>(Stripped)->isDeclaration());
-        // TODO handle indirect call using AddressTakenFuncs
+          continue;
+        }
+        FuncsToVisit.append(AddressTakenFuncs.begin(), AddressTakenFuncs.end());
+      } else if (checkIfFunctionOfInterest(CallF)) {
+        FuncsToVisit.push_back(CallF);
+      } else {
         continue;
       }
 
-      if (checkIfFunctionOfInterest(Callee)
-          && Callees.insert(Callee).second)
-        buildMTECallGraph(Callee, Stack);
+      for (Function *Callee : FuncsToVisit)
+        if (Callees.insert(Callee).second)
+          buildMTECallGraph(Callee, Stack);
     }
   }
   Stack.pop_back();
@@ -5561,13 +5567,11 @@ void SoftBoundCETSPass::analyzePtrRoots(Function *F) {
         Function *Callee = CI->getCalledFunction();
         if (!Callee) {
           Value *Stripped = CI->getCalledValue()->stripPointerCasts();
-          if (isa<Function>(Stripped))
+          if (isa<Function>(Stripped)) {
             assert(cast<Function>(Stripped)->isDeclaration());
-          // TODO handle indirect call using AddressTakenFuncs
-          continue;
-        }
-
-        if (!checkIfFunctionOfInterest(Callee))
+            continue;
+          }
+        } else if (!checkIfFunctionOfInterest(Callee))
           continue;
 
         for (Value *Arg : CI->arg_operands()) {
@@ -6071,8 +6075,10 @@ bool SoftBoundCETSPass::runOnModule(Module& module) {
             assert(isa<CallInst>(U2));
           continue;
         }
-        if (!isa<BlockAddress>(U) && !isa<CallInst>(U))
+        if (!isa<BlockAddress>(U) && !isa<CallInst>(U)) {
+          assert(checkIfFunctionOfInterest(F));
           AddressTakenFuncs.insert(F);
+        }
       }
     }
 
