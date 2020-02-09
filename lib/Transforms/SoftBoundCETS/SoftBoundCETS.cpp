@@ -5765,14 +5765,17 @@ void SoftBoundCETSPass::calculateFinalMTECost(MTECGNode *N) {
   MTECostAvailable.insert(N);
 }
 
-void SoftBoundCETSPass::cancelTagAssignment(MTECGNode *N, Value *Root) {
-  FuncMTEInfoTy &FuncMTEInfo = ModuleMTEInfo[N];
-  if (!FuncMTEInfo.count(Root))
-    return;
-
-  FuncMTEInfo[Root]->TagAssigned = false;
-  for (MTECGNode *CalleeN : N->Callees)
-    cancelTagAssignment(CalleeN, Root);
+void SoftBoundCETSPass::cancelTagAssignment(MTECGNode *N, MTEInfo *Info) {
+  Value *Root = Info->Root;
+  for (MTECGNode *CalleeN : N->Callees) {
+    FuncMTEInfoTy &CalleeMTEInfo = ModuleMTEInfo[CalleeN];
+    if (!CalleeMTEInfo.count(Root))
+      continue;
+    MTEInfo *CalleeInfo = CalleeMTEInfo[Root];
+    assert(CalleeInfo->TagNum == Info->TagNum);
+    CalleeInfo->TagAssigned = false;
+    cancelTagAssignment(CalleeN, CalleeInfo);
+  }
 }
 
 double SoftBoundCETSPass::getColoringOverhead(const DataLayout &DL, MTEInfo *Info) {
@@ -5830,7 +5833,7 @@ void SoftBoundCETSPass::assignTagsTopDown(const DataLayout &DL, MTECGNode *N, MT
   }
 
   int i = 0;
-  bool TagNumArray[16] = {false};
+  MTEInfo *AssignedRoots[16] = {NULL};
   SmallVector<MTEInfo*, 8> Temp;
   for (MTEInfoSortedTy::iterator I = MTEInfoSorted.begin(), E = MTEInfoSorted.end();
        I != E && i < 15; ++I, ++i) {  // Select 15 objects
@@ -5847,8 +5850,8 @@ void SoftBoundCETSPass::assignTagsTopDown(const DataLayout &DL, MTECGNode *N, MT
           int TagNum = ParentMTEInfo->lookup(Root)->TagNum;
           assert(TagNum);
           CurInfo->TagNum = TagNum;
-          assert(!TagNumArray[TagNum]);
-          TagNumArray[TagNum] = true;
+          assert(!AssignedRoots[TagNum]);
+          AssignedRoots[TagNum] = CurInfo;
           AssignTag = true;
         }
       } else {
@@ -5857,8 +5860,8 @@ void SoftBoundCETSPass::assignTagsTopDown(const DataLayout &DL, MTECGNode *N, MT
           int TagNum = ParentGlobalPtrInfo->lookup(Root)->TagNum;
           assert(TagNum);
           CurInfo->TagNum = TagNum;
-          assert(!TagNumArray[TagNum]);
-          TagNumArray[TagNum] = true;
+          assert(!AssignedRoots[TagNum]);
+          AssignedRoots[TagNum] = CurInfo;
           AssignTag = true;
         }
       }
@@ -5878,8 +5881,8 @@ void SoftBoundCETSPass::assignTagsTopDown(const DataLayout &DL, MTECGNode *N, MT
         int TagNum = ParentMTEInfo->lookup(ArgRoot)->TagNum;
         assert(TagNum);
         CurInfo->TagNum = TagNum;
-        assert(!TagNumArray[TagNum]);
-        TagNumArray[TagNum] = true;
+        assert(!AssignedRoots[TagNum]);
+        AssignedRoots[TagNum] = CurInfo;
         AssignTag = true;
       }
     }
@@ -5898,11 +5901,12 @@ void SoftBoundCETSPass::assignTagsTopDown(const DataLayout &DL, MTECGNode *N, MT
   i = 1;
   bool NewlyTagged[16] = {false};
   for (MTEInfo *I : Temp) {
-    while (TagNumArray[i]) i++;
+    while (AssignedRoots[i]) i++;
     assert(i < 16);
     I->TagNum = i;
     I->NeedColoringCode = true;
     N->mayNeedRecoloring = true;
+    AssignedRoots[i] = I;
     NewlyTagged[i] = true;
     i++;
   }
@@ -5919,7 +5923,7 @@ void SoftBoundCETSPass::assignTagsTopDown(const DataLayout &DL, MTECGNode *N, MT
     Root->dump();
     dbgs() << "    Cost: " << Cost << " Tag: " << CurInfo->TagNum;
     if (CurInfo->isGlobalPtr) dbgs() << " [GlobalPtr]";
-    if (!TagNumArray[CurInfo->TagNum]) dbgs() << " [New] ";
+    if (NewlyTagged[CurInfo->TagNum]) dbgs() << " [New] ";
     dbgs() << '\n';
     ++i;
   }
