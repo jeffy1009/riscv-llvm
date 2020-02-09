@@ -5811,6 +5811,10 @@ void SoftBoundCETSPass::assignTagsTopDown(const DataLayout &DL, MTECGNode *N, MT
   FuncMTEInfoTy *ParentMTEInfo = NULL;
   FuncMTEInfoTy *ParentGlobalPtrInfo = NULL;
   if (Parent) {
+    dbgs() << "         called from node " << Parent << ": ";
+    for (Function *F : Parent->Functions)
+      dbgs() << F->getName() << " ";
+    dbgs() << '\n';
     ParentMTEInfo = &ModuleMTEInfo[Parent];
     ParentGlobalPtrInfo = &ModuleGlobalPtrInfo[Parent];
   }
@@ -5972,14 +5976,37 @@ void SoftBoundCETSPass::assignTagsTopDown(const DataLayout &DL, MTECGNode *N, MT
       continue;
     }
 
-    if (!CalleeN->mayNeedRecoloring) {
-      for (auto &I : ModuleMTEInfo[CalleeN]) {
-        if (!I.second->TagAssigned)
-          continue;
-        assert(I.second->Cost - getColoringOverhead(DL, I.first) < MTE_THRESHOLD);
-        cancelTagAssignment(CalleeN, I.first);
-      }
+#if 0 // TODO
+    for (auto &I : ModuleMTEInfo[CalleeN]) {
+      if (!I.second->TagAssigned)
+        continue;
+      Value *CalleeRoot = I.first;
+      if (!isa<Constant>(CalleeRoot))
+        continue;
+      MTEInfo *CalleeInfo = I.second;
+      MTEInfo *CurInfo = AssignedRoots[CalleeInfo->TagNum];
+      assert(!CurInfo->isGlobalPtr);
+      if (CalleeInfo->Root == CurInfo->Root) // Good!
+        continue;
+      assert(CalleeInfo->Cost - getColoringOverhead(DL, CalleeInfo) < MTE_THRESHOLD);
+      CalleeInfo->TagAssigned = false;
+      cancelTagAssignment(CalleeN, CalleeInfo);
+      // CalleeN->mayNeedColoring = true;
     }
+
+    for (auto &I : ModuleGlobalPtrInfo[CalleeN]) {
+      if (!I.second->TagAssigned)
+        continue;
+      Value *CalleeRoot = I.first;
+      MTEInfo *CalleeInfo = I.second;
+      MTEInfo *CurInfo = AssignedRoots[CalleeInfo->TagNum];
+      assert(CurInfo->isGlobalPtr);
+      if (CalleeInfo->Root == CurInfo->Root) // Good!
+        continue;
+      assert(CalleeInfo->Cost - getColoringOverhead(DL, CalleeInfo) < MTE_THRESHOLD);
+      cancelTagAssignmentGP(CalleeN, I.first);
+    }
+#endif
   }
 }
 

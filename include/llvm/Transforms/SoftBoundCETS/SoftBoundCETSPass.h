@@ -330,7 +330,7 @@ class SoftBoundCETSPass: public ModulePass {
   void saveBlockFreq(Function *F);
   void calculateMTECostForFunc(Function *F);
   void calculateFinalMTECost(MTECGNode *N);
-  void cancelTagAssignment(MTECGNode *N, Value *Root);
+  void cancelTagAssignment(MTECGNode *N, MTEInfo *Info);
   double getColoringOverhead(const DataLayout &DL, MTEInfo *Info);
   void assignTagsTopDown(const DataLayout &DL, MTECGNode *N, MTECGNode *Parent);
 
