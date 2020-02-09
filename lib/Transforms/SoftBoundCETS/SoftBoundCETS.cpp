@@ -331,7 +331,7 @@ Value *SoftBoundCETSPass::findPtrRoot(Value *V, SmallPtrSetImpl<Value *> &Visite
     goto end;
   }
   case Instruction::Load: {
-    assert(!AA->pointsToConstantMemory(cast<LoadInst>(V)->getOperand(0)));
+    //assert(!AA->pointsToConstantMemory(cast<LoadInst>(V)->getOperand(0)));
     Ret = V;
     goto end;
   }
@@ -5515,16 +5515,16 @@ void SoftBoundCETSPass::buildMTECallGraph(Function *F, SmallVectorImpl<Function 
       SmallVector<Function *, 8> FuncsToVisit;
       if (!CallF) {
         Value *Stripped = CI->getCalledValue()->stripPointerCasts();
-        if (isa<Function>(Stripped)) {
-          assert(cast<Function>(Stripped)->isDeclaration());
-          continue;
-        }
-        FuncsToVisit.append(AddressTakenFuncs.begin(), AddressTakenFuncs.end());
-      } else if (checkIfFunctionOfInterest(CallF)) {
-        FuncsToVisit.push_back(CallF);
-      } else {
-        continue;
+        if (isa<Function>(Stripped))
+          CallF = cast<Function>(Stripped);
       }
+
+      if (!CallF)
+        FuncsToVisit.append(AddressTakenFuncs.begin(), AddressTakenFuncs.end());
+      else if (checkIfFunctionOfInterest(CallF))
+        FuncsToVisit.push_back(CallF);
+      else
+        continue;
 
       for (Function *Callee : FuncsToVisit)
         if (Callees.insert(Callee).second)
@@ -5564,18 +5564,18 @@ void SoftBoundCETSPass::analyzePtrRoots(Function *F) {
         if (CI->isInlineAsm())
           continue;
 
-        Function *Callee = CI->getCalledFunction();
-        if (!Callee) {
+        Function *CallF = CI->getCalledFunction();
+        if (!CallF) {
           Value *Stripped = CI->getCalledValue()->stripPointerCasts();
-          if (isa<Function>(Stripped)) {
-            assert(cast<Function>(Stripped)->isDeclaration());
-            continue;
-          }
-        } else if (!checkIfFunctionOfInterest(Callee))
+          if (isa<Function>(Stripped))
+            CallF = cast<Function>(Stripped);
+        }
+
+        if (CallF && !checkIfFunctionOfInterest(CallF))
           continue;
 
         for (Value *Arg : CI->arg_operands()) {
-          if (!Arg->getType()->isPointerTy())
+          if (!Arg->getType()->isPointerTy() || isa<Function>(Arg))
             continue;
 
           SmallPtrSet<Value *, 16> Visited;
@@ -5692,10 +5692,11 @@ void SoftBoundCETSPass::calculateFinalMTECost(MTECGNode *N) {
         SmallVector<Function *, 8> FuncsToVisit;
         if (!CallF) {
           Value *Stripped = CI->getCalledValue()->stripPointerCasts();
-          if (isa<Function>(Stripped)) {
-            assert(cast<Function>(Stripped)->isDeclaration());
-            continue;
-          }
+          if (isa<Function>(Stripped))
+            CallF = cast<Function>(Stripped);
+        }
+
+        if (!CallF) {
           FuncsToVisit.append(AddressTakenFuncs.begin(), AddressTakenFuncs.end());
         } else if (checkIfFunctionOfInterest(CallF)) {
           // Avoid infinite loop due to recursive func
@@ -6193,6 +6194,8 @@ bool SoftBoundCETSPass::runOnModule(Module& module) {
           tmp_base = getAssociatedBase(Root);
           tmp_bound = getAssociatedBound(Root);
           InsertPos = getNextInstruction(cast<Instruction>(tmp_bound));
+          if (isa<PHINode>(InsertPos))
+            InsertPos = &*InsertPos->getParent()->getFirstInsertionPt();
           assert(isa<Argument>(Root) || cast<Instruction>(Root)->getFunction() == func_ptr);
         }
 
