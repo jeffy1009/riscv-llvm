@@ -5775,11 +5775,14 @@ void SoftBoundCETSPass::cancelTagAssignment(MTECGNode *N, Value *Root) {
     cancelTagAssignment(CalleeN, Root);
 }
 
-const int MTE_SIZE_PENALTY = 2; // Per byte
-const int MTE_SIZE_UNKNOWN = 4096; // Bytes
-const double MTE_GPSTORE_FREQ_THRESHOLD = 30;
+double SoftBoundCETSPass::getColoringOverhead(const DataLayout &DL, MTEInfo *Info) {
+  const int MTE_SIZE_PENALTY = 2; // Per byte
+  const int MTE_SIZE_UNKNOWN = 4096; // Bytes
 
-double SoftBoundCETSPass::getColoringOverhead(const DataLayout &DL, Value *Root) {
+  if (Info->isGlobalPtr)
+    return MTE_SIZE_UNKNOWN * MTE_SIZE_PENALTY;
+
+  Value *Root = Info->Root;
   unsigned int Size;
   // TODO: other cases that we know the size statically?
   if (isa<AllocaInst>(Root) || isa<Constant>(Root))
@@ -5796,6 +5799,7 @@ double SoftBoundCETSPass::getColoringOverhead(const DataLayout &DL, Value *Root)
 }
 
 void SoftBoundCETSPass::assignTagsTopDown(const DataLayout &DL, MTECGNode *N, MTECGNode *Parent) {
+  const double MTE_GPSTORE_FREQ_THRESHOLD = 30;
   dbgs() << "========= Assigning tags for node " << N << ": ";
   for (Function *F : N->Functions)
     dbgs() << F->getName() << " ";
@@ -5811,8 +5815,7 @@ void SoftBoundCETSPass::assignTagsTopDown(const DataLayout &DL, MTECGNode *N, MT
   MTEInfoSortedTy MTEInfoSorted;
   FuncMTEInfoTy &FuncMTEInfo = ModuleMTEInfo[N];
   for (auto &I : FuncMTEInfo) {
-    Value *Root = I.first;
-    double Cost = I.second->Cost - getColoringOverhead(DL, Root);
+    double Cost = I.second->Cost - getColoringOverhead(DL, I.second);
     MTEInfoSorted.insert(std::pair<double, MTEInfo*>(Cost, I.second));
   }
 
@@ -5822,7 +5825,7 @@ void SoftBoundCETSPass::assignTagsTopDown(const DataLayout &DL, MTECGNode *N, MT
     FuncGPStoreInfoTy &MainFuncGPStoreInfo = ModuleGPStoreInfo[FuncCGNodeMap[MainFunc]];
     if (MainFuncGPStoreInfo[GPRoot].Cost > MTE_GPSTORE_FREQ_THRESHOLD)
       continue;
-    double Cost = I.second->Cost - MTE_SIZE_UNKNOWN * MTE_SIZE_PENALTY;
+    double Cost = I.second->Cost - getColoringOverhead(DL, I.second);
     MTEInfoSorted.insert(std::pair<double, MTEInfo*>(Cost, I.second));
   }
 
@@ -5932,7 +5935,7 @@ void SoftBoundCETSPass::assignTagsTopDown(const DataLayout &DL, MTECGNode *N, MT
       if (CurInfo->TagAssigned && NewlyTagged[CurInfo->TagNum]
           && (!FuncMTEInfo.count(Root) || !FuncMTEInfo[Root]->TagAssigned)) {
         double Cost = FuncMTEInfo.count(Root) ?
-          FuncMTEInfo[Root]->Cost - getColoringOverhead(DL, Root) : 0;
+          FuncMTEInfo[Root]->Cost - getColoringOverhead(DL, CurInfo) : 0;
         Root->dump();
         dbgs() << "    Cost: " << Cost << '\n';
       }
@@ -5943,7 +5946,7 @@ void SoftBoundCETSPass::assignTagsTopDown(const DataLayout &DL, MTECGNode *N, MT
       if (CurInfo->TagAssigned && NewlyTagged[CurInfo->TagNum]
           && (!FuncGlobalPtrInfo.count(Root) || !FuncGlobalPtrInfo[Root]->TagAssigned)) {
         double Cost = FuncGlobalPtrInfo.count(Root) ?
-          FuncGlobalPtrInfo[Root]->Cost - MTE_SIZE_UNKNOWN * MTE_SIZE_PENALTY : 0;
+          FuncGlobalPtrInfo[Root]->Cost - getColoringOverhead(DL, CurInfo) : 0;
         Root->dump();
         dbgs() << "    Cost: " << Cost  << " [GlobalPtr]\n";
       }
