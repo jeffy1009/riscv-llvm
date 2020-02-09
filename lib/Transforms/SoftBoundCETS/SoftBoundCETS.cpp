@@ -5375,6 +5375,8 @@ void SoftBoundCETSPass::addBaseBoundGlobals(Module& M){
       continue;
     }
 
+    gv->setAlignment(16); //jsshin
+
     /* gv->hasInitializer() is true */
 
     Constant* initializer = dyn_cast<Constant>(it->getInitializer());
@@ -6128,6 +6130,15 @@ bool SoftBoundCETSPass::runOnModule(Module& module) {
     // in the original program are also identified
     //
     identifyOriginalInst(func_ptr);
+
+    // jsshin
+    for (auto &BBI : func_ptr->getBasicBlockList()) {
+      BasicBlock *BB = &BBI;
+      for (auto &InstI : BB->getInstList()) {
+        if (AllocaInst *AI = dyn_cast<AllocaInst>(&InstI))
+          AI->setAlignment(16);
+      }
+    }
 
     //
     // Iterate over all basic block and then each insn within a basic
