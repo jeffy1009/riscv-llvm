@@ -5913,7 +5913,7 @@ void SoftBoundCETSPass::assignTagsTopDown(const DataLayout &DL, MTECGNode *N, MT
         CurInfo->TagNum = TagNum;
         CurInfo->NeedColoringCode = true;
         N->mayNeedRecoloring = true;
-        assert(!AssignedRoots[TagNum]);
+        //assert(!AssignedRoots[TagNum]); // different arguments may have same actual arg in caller
         AssignedRoots[TagNum] = CurInfo;
         AssignTag = true;
       }
