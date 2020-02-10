@@ -5743,6 +5743,8 @@ void SoftBoundCETSPass::calculateFinalMTECost(MTECGNode *N) {
               }
 
               Value *ActualArg = CI->getArgOperand(i);
+              if (isa<ConstantPointerNull>(ActualArg))
+                continue;
               assert(PtrRootMap.count(ActualArg));
               Value *ActualRoot = PtrRootMap[ActualArg];
               if (!FuncMTEInfo.count(ActualRoot)) {
