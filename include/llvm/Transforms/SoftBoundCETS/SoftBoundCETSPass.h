@@ -302,6 +302,7 @@ class SoftBoundCETSPass: public ModulePass {
   Function *MainFunc;
 
   SmallPtrSet<Function *, 4> AddressTakenFuncs;
+  DenseMap<CallInst *, SmallPtrSet<Function *, 8> > IndCallTargets;
   SmallPtrSet<GlobalVariable *, 16> GPStoreCand;
   DenseMap<Function *, MTECGNode *> FuncCGNodeMap;
   DenseMap<Value *, Value *> PtrRootMap;

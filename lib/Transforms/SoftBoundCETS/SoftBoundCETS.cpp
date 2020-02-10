@@ -5520,7 +5520,10 @@ void SoftBoundCETSPass::buildMTECallGraph(Function *F, SmallVectorImpl<Function 
       }
 
       if (!CallF)
-        FuncsToVisit.append(AddressTakenFuncs.begin(), AddressTakenFuncs.end());
+        if (IndCallTargets.count(CI))
+          FuncsToVisit.append(IndCallTargets[CI].begin(), IndCallTargets[CI].end());
+        else
+          FuncsToVisit.append(IndCallTargets[NULL].begin(), IndCallTargets[NULL].end());
       else if (checkIfFunctionOfInterest(CallF))
         FuncsToVisit.push_back(CallF);
       else
@@ -5697,7 +5700,10 @@ void SoftBoundCETSPass::calculateFinalMTECost(MTECGNode *N) {
         }
 
         if (!CallF) {
-          FuncsToVisit.append(AddressTakenFuncs.begin(), AddressTakenFuncs.end());
+          if (IndCallTargets.count(CI))
+            FuncsToVisit.append(IndCallTargets[CI].begin(), IndCallTargets[CI].end());
+          else
+            FuncsToVisit.append(IndCallTargets[NULL].begin(), IndCallTargets[NULL].end());
         } else if (checkIfFunctionOfInterest(CallF)) {
           // Avoid infinite loop due to recursive func
           if (FuncCGNodeMap[CallF] == N)
@@ -6066,18 +6072,65 @@ bool SoftBoundCETSPass::runOnModule(Module& module) {
     // MTE Analysis
     ///////////////////////////////
 
+    // Analyze indirect call targets
     for (auto &I : module.functions()) {
       Function *F = &I;
       if (!checkIfFunctionOfInterest(F))
         continue;
-      for (const User *U : F->users()) {
+      for (User *U : F->users()) {
+        assert(!isa<BlockAddress>(U));
         if (isa<ConstantExpr>(U)) {
-          for (const User *U2 : U->users())
-            assert(isa<CallInst>(U2));
+          for (User *U2 : U->users()) {
+            CallInst *CI = cast<CallInst>(U2);
+            Function *CallF = cast<Function>(CI->getCalledValue()->stripPointerCasts());
+            assert(CallF == F);
+          }
           continue;
         }
-        if (!isa<BlockAddress>(U) && !isa<CallInst>(U)) {
-          assert(checkIfFunctionOfInterest(F));
+
+        if (CallInst *CI = dyn_cast<CallInst>(U)) {
+          Function *CallF = cast<Function>(CI->getCalledValue()->stripPointerCasts());
+          if (CallF == F)
+            continue;
+
+          auto ArgI = CallF->arg_begin();
+          for (Value *V : CI->arg_operands()) {
+            if (V == F)
+              break;
+            ArgI++;
+          }
+
+          for (User *U : ArgI->users()) {
+            if (StoreInst *SI = dyn_cast<StoreInst>(U)) {
+              GlobalVariable *GV = cast<GlobalVariable>(SI->getPointerOperand());
+              for (User *U2 : GV->users()) {
+                assert(isa<LoadInst>(U2) || isa<StoreInst>(U2));
+                LoadInst *LI = dyn_cast<LoadInst>(U2);
+                if (!LI)
+                  continue;
+                for (User *U3 : LI->users()) {
+                  if (isa<CastInst>(U3)) {
+                    for (User *U4 : U3->users()) {
+                      assert(cast<CallInst>(U4)->getCalledValue() == U3);
+                      IndCallTargets[cast<CallInst>(U4)].insert(F);
+                      AddressTakenFuncs.insert(F);
+                    }
+                  } else {assert(0);
+                    assert(cast<CallInst>(U3)->getCalledValue() == LI);
+                    IndCallTargets[cast<CallInst>(U3)].insert(F);
+                    AddressTakenFuncs.insert(F);
+                  }
+                }
+              }
+            } else {
+              assert(cast<CallInst>(U)->getCalledValue() == &*ArgI);
+              IndCallTargets[cast<CallInst>(U)].insert(F);
+              AddressTakenFuncs.insert(F);
+            }
+          }
+        } else {
+          assert(isa<StoreInst>(U));
+          IndCallTargets[NULL].insert(F);
           AddressTakenFuncs.insert(F);
         }
       }
