@@ -6066,14 +6066,8 @@ bool SoftBoundCETSPass::runOnModule(Module& module) {
   identifyFuncToTrans(module);
 
   identifyInitialGlobals(module);
-  if (!USE_METALLOC)
-    addBaseBoundGlobals(module); // SOFTBOUND_ORIG
 
   if (ENABLE_MTE) {
-    ///////////////////////////////
-    // MTE Analysis
-    ///////////////////////////////
-
     // Analyze indirect call targets
     for (auto &I : module.functions()) {
       Function *F = &I;
@@ -6130,6 +6124,21 @@ bool SoftBoundCETSPass::runOnModule(Module& module) {
               AddressTakenFuncs.insert(F);
             }
           }
+        } else if (isa<ConstantArray>(U)) {
+          for (User *U2 : U->users()) {
+            assert(isa<GlobalVariable>(U2));
+            for (User *U3 : U2->users()) {
+              assert(isa<GetElementPtrInst>(U3));
+              for (User *U4 : U3->users()) {
+                assert(isa<LoadInst>(U4));
+                for (User *U5 : U4->users()) {
+                  assert(cast<CallInst>(U5)->getCalledValue() == U4);
+                  IndCallTargets[cast<CallInst>(U5)].insert(F);
+                  AddressTakenFuncs.insert(F);
+                }
+              }
+            }
+          }
         } else {
           assert(isa<StoreInst>(U));
           IndCallTargets[NULL].insert(F);
@@ -6137,6 +6146,15 @@ bool SoftBoundCETSPass::runOnModule(Module& module) {
         }
       }
     }
+  }
+
+  if (!USE_METALLOC)
+    addBaseBoundGlobals(module); // SOFTBOUND_ORIG
+
+  if (ENABLE_MTE) {
+    ///////////////////////////////
+    // MTE Analysis
+    ///////////////////////////////
 
     for (auto &G : module.globals()) {
       if (!cast<PointerType>(G.getType())->getElementType()->isPointerTy())
