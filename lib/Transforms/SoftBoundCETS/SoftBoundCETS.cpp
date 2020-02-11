@@ -6273,6 +6273,13 @@ bool SoftBoundCETSPass::runOnModule(Module& module) {
           getConstantExprBaseBound(given_constant, tmp_base, tmp_bound);
           InsertPos = &*func_ptr->getEntryBlock().getFirstInsertionPt();
         } else {
+          if (Argument *Arg = dyn_cast<Argument>(Root)) {
+            if (Arg->getParent()!=func_ptr)
+              continue;
+          } else {
+            if (cast<Instruction>(Root)->getFunction()!=func_ptr)
+              continue;
+          }
           tmp_base = getAssociatedBase(Root);
           tmp_bound = getAssociatedBound(Root);
           InsertPos = getNextInstruction(cast<Instruction>(tmp_bound));
@@ -6329,7 +6336,6 @@ bool SoftBoundCETSPass::runOnModule(Module& module) {
 #endif
     }
   }
-
 
   renameFunctions(module);
   DEBUG(errs()<<"Done with SoftBoundCETSPass\n");
