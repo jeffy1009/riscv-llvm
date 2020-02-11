@@ -5611,6 +5611,7 @@ void SoftBoundCETSPass::saveBlockFreq(Function *F) {
   for (auto &BBI : F->getBasicBlockList()) {
     BasicBlock *BB = &BBI;
     BlockFreq[BB] = BFI->getBlockFreq(BB).getFrequency() / (double)BFI->getEntryFreq();
+    BBInLoop[BB] = LI->getLoopFor(BB);
   }
 }
 
@@ -5666,6 +5667,10 @@ void SoftBoundCETSPass::calculateMTECostForFunc(Function *F) {
           assert(!isa<Constant>(Root));
         }
       }
+
+      // TODO: support roots inside loops
+      if (isa<Instruction>(Root) && BBInLoop[cast<Instruction>(Root)->getParent()])
+        continue;
 
       if (!FuncMTEInfo.count(Root)) {
         MTEInfo *New = new MTEInfo();
@@ -5747,6 +5752,10 @@ void SoftBoundCETSPass::calculateFinalMTECost(MTECGNode *N) {
                 continue;
               assert(PtrRootMap.count(ActualArg));
               Value *ActualRoot = PtrRootMap[ActualArg];
+              // TODO: support roots inside loop
+              if (isa<Instruction>(ActualRoot) && BBInLoop[cast<Instruction>(ActualRoot)->getParent()])
+                continue;
+
               if (!FuncMTEInfo.count(ActualRoot)) {
                 MTEInfo *New = new MTEInfo();
                 New->Root = ActualRoot;

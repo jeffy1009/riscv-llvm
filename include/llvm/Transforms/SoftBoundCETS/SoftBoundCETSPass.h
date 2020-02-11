@@ -307,6 +307,7 @@ class SoftBoundCETSPass: public ModulePass {
   DenseMap<Function *, MTECGNode *> FuncCGNodeMap;
   DenseMap<Value *, Value *> PtrRootMap;
   DenseMap<BasicBlock *, double> BlockFreq;
+  DenseMap<BasicBlock *, bool> BBInLoop;
   DenseMap<Value *, SmallPtrSet<Argument *, 8> > RootArgMap;
 
   typedef DenseMap<Value *, MTEInfo*> FuncMTEInfoTy;
