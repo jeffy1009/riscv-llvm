@@ -4062,9 +4062,12 @@ void SoftBoundCETSPass::handleAlloca (AllocaInst* alloca_inst,
      * and handle the case
      */
 
-    BasicBlock::iterator nextInst = i;
-    nextInst++;
-    Instruction* next = dyn_cast<Instruction>(nextInst);
+    BasicBlock::iterator It = i;
+    It++;
+    while (isa<AllocaInst>(*It) || isa<DbgInfoIntrinsic>(*It))
+      ++It;
+
+    Instruction* next = dyn_cast<Instruction>(It);
     assert(next && "Cannot increment the instruction iterator?");
 
     unsigned num_operands = alloca_inst->getNumOperands();
