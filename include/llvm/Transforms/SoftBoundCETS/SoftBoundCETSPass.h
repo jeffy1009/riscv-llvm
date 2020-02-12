@@ -276,9 +276,20 @@ class SoftBoundCETSPass: public ModulePass {
   bool m_is_64_bit;
 
   /* MTE related data structures */
+  struct MTECGNode {
+    SmallPtrSet<Function *, 4> Functions;
+    SmallPtrSet<MTECGNode *, 8> Callees;
+    SmallPtrSet<CallInst *, 8> CallInsts;
+    SmallPtrSet<MTECGNode *, 8> Callers;
+    bool isRecursive;
+    bool mayNeedRecoloring;
+    bool TaggingDone;
+  };
+
   struct MTEInfo {
     Value *Root;
     double Cost;
+    MTECGNode *ParentNode;
     bool TagAssigned;
     bool ColoringDone;
     bool isGlobalPtr;
@@ -288,15 +299,6 @@ class SoftBoundCETSPass: public ModulePass {
 
   struct GPStoreInfo {
     double Cost;
-  };
-
-  struct MTECGNode {
-    SmallPtrSet<Function *, 4> Functions;
-    SmallPtrSet<MTECGNode *, 8> Callees;
-    SmallPtrSet<MTECGNode *, 8> Callers;
-    bool isRecursive;
-    bool mayNeedRecoloring;
-    bool TaggingDone;
   };
 
   Function *MainFunc;
@@ -309,6 +311,7 @@ class SoftBoundCETSPass: public ModulePass {
   DenseMap<BasicBlock *, double> BlockFreq;
   DenseMap<BasicBlock *, bool> BBInLoop;
   DenseMap<Value *, SmallPtrSet<Argument *, 8> > RootArgMap;
+  DenseMap<MTECGNode *, double> SubTreeCost;
 
   typedef DenseMap<Value *, MTEInfo*> FuncMTEInfoTy;
   typedef DenseMap<GlobalVariable *, GPStoreInfo> FuncGPStoreInfoTy;
@@ -331,7 +334,7 @@ class SoftBoundCETSPass: public ModulePass {
   void analyzePtrRoots(Function *F);
   void saveBlockFreq(Function *F);
   void calculateMTECostForFunc(Function *F);
-  void calculateFinalMTECost(MTECGNode *N);
+  void calculateFinalMTECost(const DataLayout &DL, MTECGNode *N);
   void cancelTagAssignment(MTECGNode *N, MTEInfo *Info);
   double getColoringOverhead(const DataLayout &DL, MTEInfo *Info);
   void assignTagsTopDown(const DataLayout &DL, MTECGNode *N, MTECGNode *Parent);

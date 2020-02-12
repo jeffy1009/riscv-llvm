@@ -5511,6 +5511,7 @@ void SoftBoundCETSPass::buildMTECallGraph(Function *F, SmallVectorImpl<Function 
 
   Stack.push_back(F);
   SmallPtrSet<Function *, 8> Callees;
+  SmallPtrSet<CallInst *, 8> CallInsts;
   for (auto &BBI : F->getBasicBlockList()) {
     BasicBlock *BB = &BBI;
     for (auto &InstI : BB->getInstList()) {
@@ -5523,6 +5524,7 @@ void SoftBoundCETSPass::buildMTECallGraph(Function *F, SmallVectorImpl<Function 
       if (CI->isInlineAsm())
         continue;
 
+      CallInsts.insert(CI);
       Function *CallF = CI->getCalledFunction();
       SmallVector<Function *, 8> FuncsToVisit;
       if (!CallF) {
@@ -5566,6 +5568,7 @@ void SoftBoundCETSPass::buildMTECallGraph(Function *F, SmallVectorImpl<Function 
     }
   }
 
+  CGN->CallInsts = CallInsts;
   assert(CGN->Functions.size() < 3);
 }
 
@@ -5694,7 +5697,9 @@ void SoftBoundCETSPass::calculateMTECostForFunc(Function *F) {
   }
 }
 
-void SoftBoundCETSPass::calculateFinalMTECost(MTECGNode *N) {
+const double MTE_GPSTORE_FREQ_THRESHOLD = 30;
+
+void SoftBoundCETSPass::calculateFinalMTECost(const DataLayout &DL, MTECGNode *N) {
   for (auto *F : N->Functions) {
     for (auto &BBI : F->getBasicBlockList()) {
       BasicBlock *BB = &BBI;
@@ -5738,7 +5743,7 @@ void SoftBoundCETSPass::calculateFinalMTECost(MTECGNode *N) {
           assert(CalleeN != N && "Indirect call to self??");
 
           if (!MTECostAvailable.count(CalleeN))
-            calculateFinalMTECost(CalleeN);
+            calculateFinalMTECost(DL, CalleeN);
 
           FuncGPStoreInfoTy &FuncGPStoreInfo = ModuleGPStoreInfo[FuncCGNodeMap[F]];
           FuncGPStoreInfoTy &CalleeGPStoreInfo = ModuleGPStoreInfo[CalleeN];
@@ -5808,6 +5813,30 @@ void SoftBoundCETSPass::calculateFinalMTECost(MTECGNode *N) {
   }
 
   MTECostAvailable.insert(N);
+
+  MTEInfoSortedTy MTEInfoSorted;
+  FuncMTEInfoTy &FuncMTEInfo = ModuleMTEInfo[N];
+  for (auto &I : FuncMTEInfo) {
+    double Cost = I.second->Cost - getColoringOverhead(DL, I.second);
+    MTEInfoSorted.insert(std::pair<double, MTEInfo*>(Cost, I.second));
+  }
+
+  FuncMTEInfoTy &FuncGlobalPtrInfo = ModuleGlobalPtrInfo[N];
+  for (auto &I : FuncGlobalPtrInfo) {
+    GlobalVariable *GPRoot = cast<GlobalVariable>(I.first->stripInBoundsConstantOffsets());
+    FuncGPStoreInfoTy &MainFuncGPStoreInfo = ModuleGPStoreInfo[FuncCGNodeMap[MainFunc]];
+    if (MainFuncGPStoreInfo[GPRoot].Cost > MTE_GPSTORE_FREQ_THRESHOLD)
+      continue;
+    double Cost = I.second->Cost - getColoringOverhead(DL, I.second);
+    MTEInfoSorted.insert(std::pair<double, MTEInfo*>(Cost, I.second));
+  }
+
+  double Cost = 0;
+  int i = 0;
+  for (MTEInfoSortedTy::iterator I = MTEInfoSorted.begin(), E = MTEInfoSorted.end();
+       I != E && i < 15; ++I, ++i)
+    Cost += (*I).second->Cost;
+  SubTreeCost[N] = Cost;
 }
 
 void SoftBoundCETSPass::cancelTagAssignment(MTECGNode *N, MTEInfo *Info) {
@@ -5847,7 +5876,6 @@ double SoftBoundCETSPass::getColoringOverhead(const DataLayout &DL, MTEInfo *Inf
 }
 
 void SoftBoundCETSPass::assignTagsTopDown(const DataLayout &DL, MTECGNode *N, MTECGNode *Parent) {
-  const double MTE_GPSTORE_FREQ_THRESHOLD = 30;
   dbgs() << "========= Assigning tags for node " << N << ": ";
   for (Function *F : N->Functions)
     dbgs() << F->getName() << " ";
@@ -6015,7 +6043,44 @@ void SoftBoundCETSPass::assignTagsTopDown(const DataLayout &DL, MTECGNode *N, MT
   // if (N->Callees.empty())
   //   assert(!N->mayNeedRecoloring);
 
-  for (MTECGNode *CalleeN : N->Callees) {
+  // Visit callees according to the total bounds check cost of 15 frequently accessed objects
+  DenseMap<MTECGNode *, double> CalleeCost;
+  for (CallInst *CI : N->CallInsts) {
+    Function *CallF = CI->getCalledFunction();
+    SmallVector<Function *, 8> FuncsToVisit;
+    if (!CallF) {
+      Value *Stripped = CI->getCalledValue()->stripPointerCasts();
+      if (isa<Function>(Stripped))
+        CallF = cast<Function>(Stripped);
+    }
+
+    if (!CallF) {
+      if (IndCallTargets.count(CI))
+        FuncsToVisit.append(IndCallTargets[CI].begin(), IndCallTargets[CI].end());
+      else
+        FuncsToVisit.append(IndCallTargets[NULL].begin(), IndCallTargets[NULL].end());
+    } else if (checkIfFunctionOfInterest(CallF)) {
+      // Avoid infinite loop due to recursive func
+      if (FuncCGNodeMap[CallF] == N)
+        continue;
+      FuncsToVisit.push_back(CallF);
+    } else {
+      continue;
+    }
+
+    const int NFuncs = FuncsToVisit.size();
+    for (Function *Callee : FuncsToVisit) {
+      MTECGNode *CalleeN = FuncCGNodeMap[Callee];
+      CalleeCost[CalleeN] += SubTreeCost[CalleeN] * BlockFreq[CI->getParent()] / NFuncs;
+    }
+  }
+
+  std::multimap<double, MTECGNode*, std::greater<double> > CalleesSorted;
+  for (auto &I : CalleeCost)
+    CalleesSorted.insert(std::pair<double, MTECGNode*>(I.second, I.first));
+
+  for (auto &I : CalleesSorted) {
+    MTECGNode *CalleeN = I.second;
     if (!CalleeN->TaggingDone) {
       assignTagsTopDown(DL, CalleeN, N);
       continue;
@@ -6216,7 +6281,7 @@ bool SoftBoundCETSPass::runOnModule(Module& module) {
     }
 
     MTECGNode *MainFuncCGN = FuncCGNodeMap[MainFunc];
-    calculateFinalMTECost(MainFuncCGN);
+    calculateFinalMTECost(module.getDataLayout(), MainFuncCGN);
 
     assignTagsTopDown(module.getDataLayout(), MainFuncCGN, NULL);
   }
