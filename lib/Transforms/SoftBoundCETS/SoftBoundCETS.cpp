@@ -1530,7 +1530,10 @@ void SoftBoundCETSPass::handlePHIPass2(PHINode* phi_node) {
           assert(tmp_bound && "bound of a global variable null?");
 
           Function * PHI_func = phi_node->getParent()->getParent();
-          Instruction* PHI_func_entry = &*PHI_func->begin()->begin();
+          BasicBlock::iterator It = PHI_func->begin()->getFirstInsertionPt();
+          while (isa<AllocaInst>(*It) || isa<DbgInfoIntrinsic>(*It))
+            ++It;
+          Instruction* PHI_func_entry = &*It;
 
           incoming_value_base = castToVoidPtr(tmp_base, PHI_func_entry);
           incoming_value_bound = castToVoidPtr(tmp_bound, PHI_func_entry);
@@ -1563,7 +1566,10 @@ void SoftBoundCETSPass::handlePHIPass2(PHINode* phi_node) {
                  "[handlePHIPass2] tmp_base tmp_bound, null?");
 
           Function* PHI_func = phi_node->getParent()->getParent();
-          Instruction* PHI_func_entry = &*PHI_func->begin()->begin();
+          BasicBlock::iterator It = PHI_func->begin()->getFirstInsertionPt();
+          while (isa<AllocaInst>(*It) || isa<DbgInfoIntrinsic>(*It))
+            ++It;
+          Instruction* PHI_func_entry = &*It;
 
           incoming_value_base = castToVoidPtr(tmp_base, PHI_func_entry);
           incoming_value_bound = castToVoidPtr(tmp_bound, PHI_func_entry);
@@ -4825,7 +4831,10 @@ void SoftBoundCETSPass::gatherBaseBoundPass1 (Function * func) {
 
     Argument* ptr_argument = dyn_cast<Argument>(ib);
     Value* ptr_argument_value = ptr_argument;
-    Instruction* fst_inst = &*func->begin()->begin();
+    BasicBlock::iterator It = func->begin()->getFirstInsertionPt();
+    while (isa<AllocaInst>(*It) || isa<DbgInfoIntrinsic>(*It))
+      ++It;
+    Instruction* fst_inst = &*It;
 
     /* Urgent: Need to think about what we need to do about byval attributes */
     if(ptr_argument->hasByValAttr()){
@@ -6271,7 +6280,10 @@ bool SoftBoundCETSPass::runOnModule(Module& module) {
         Instruction *InsertPos;
         if (Constant* given_constant = dyn_cast<Constant>(Root)) {
           getConstantExprBaseBound(given_constant, tmp_base, tmp_bound);
-          InsertPos = &*func_ptr->getEntryBlock().getFirstInsertionPt();
+          BasicBlock::iterator It = func_ptr->getEntryBlock().getFirstInsertionPt();
+          while (isa<AllocaInst>(*It) || isa<DbgInfoIntrinsic>(*It))
+            ++It;
+          InsertPos = &*It;
         } else {
           if (Argument *Arg = dyn_cast<Argument>(Root)) {
             if (Arg->getParent()!=func_ptr)
