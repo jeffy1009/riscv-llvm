@@ -6347,6 +6347,7 @@ bool SoftBoundCETSPass::runOnModule(Module& module) {
         Value* tmp_base = NULL, *tmp_bound = NULL;
         Instruction *InsertPos;
         if (Constant* given_constant = dyn_cast<Constant>(Root)) {
+          cast<GlobalVariable>(Root)->setConstant(false);
           getConstantExprBaseBound(given_constant, tmp_base, tmp_bound);
           BasicBlock::iterator It = func_ptr->getEntryBlock().getFirstInsertionPt();
           while (isa<AllocaInst>(*It) || isa<DbgInfoIntrinsic>(*It))
