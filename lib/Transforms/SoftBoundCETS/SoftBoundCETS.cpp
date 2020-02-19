@@ -5392,6 +5392,7 @@ void SoftBoundCETSPass::addBaseBoundGlobals(Module& M){
       continue;
     }
 
+    assert(gv->getAlignment() <= 16);
     gv->setAlignment(16); //jsshin
 
     /* gv->hasInitializer() is true */
@@ -6319,8 +6320,10 @@ bool SoftBoundCETSPass::runOnModule(Module& module) {
     for (auto &BBI : func_ptr->getBasicBlockList()) {
       BasicBlock *BB = &BBI;
       for (auto &InstI : BB->getInstList()) {
-        if (AllocaInst *AI = dyn_cast<AllocaInst>(&InstI))
+        if (AllocaInst *AI = dyn_cast<AllocaInst>(&InstI)) {
+          assert(AI->getAlignment() <= 16);
           AI->setAlignment(16);
+        }
       }
     }
 
