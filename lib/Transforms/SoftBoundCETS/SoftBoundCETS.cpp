@@ -5834,19 +5834,6 @@ void SoftBoundCETSPass::calculateFinalMTECost(const DataLayout &DL, MTECGNode *N
   SubTreeCost[N] = Cost;
 }
 
-void SoftBoundCETSPass::cancelTagAssignment(MTECGNode *N, MTEInfo *Info) {
-  Value *Root = Info->Root;
-  for (MTECGNode *CalleeN : N->Callees) {
-    FuncMTEInfoTy &CalleeMTEInfo = ModuleMTEInfo[CalleeN];
-    if (!CalleeMTEInfo.count(Root))
-      continue;
-    MTEInfo *CalleeInfo = CalleeMTEInfo[Root];
-    assert(CalleeInfo->TagNum == Info->TagNum);
-    CalleeInfo->TagAssigned = false;
-    cancelTagAssignment(CalleeN, CalleeInfo);
-  }
-}
-
 double SoftBoundCETSPass::getColoringOverhead(const DataLayout &DL, MTEInfo *Info) {
   const int MTE_SIZE_PENALTY = 2; // Per byte
   const int MTE_SIZE_UNKNOWN = 4096; // Bytes
@@ -6049,42 +6036,8 @@ void SoftBoundCETSPass::assignTagsTopDown(const DataLayout &DL, MTECGNode *N, MT
 
   for (auto &I : CalleesSorted) {
     MTECGNode *CalleeN = I.second;
-    if (!CalleeN->TaggingDone) {
-      assignTagsTopDown(DL, CalleeN, N);
-      continue;
-    }
-
-#if 0 // TODO
-    for (auto &I : ModuleMTEInfo[CalleeN]) {
-      if (!I.second->TagAssigned)
-        continue;
-      Value *CalleeRoot = I.first;
-      if (!isa<Constant>(CalleeRoot))
-        continue;
-      MTEInfo *CalleeInfo = I.second;
-      MTEInfo *CurInfo = AssignedRoots[CalleeInfo->TagNum];
-      assert(!CurInfo->isGlobalPtr);
-      if (CalleeInfo->Root == CurInfo->Root) // Good!
-        continue;
-      assert(CalleeInfo->Cost - getColoringOverhead(DL, CalleeInfo) < MTE_THRESHOLD);
-      CalleeInfo->TagAssigned = false;
-      cancelTagAssignment(CalleeN, CalleeInfo);
-      // CalleeN->mayNeedColoring = true;
-    }
-
-    for (auto &I : ModuleGlobalPtrInfo[CalleeN]) {
-      if (!I.second->TagAssigned)
-        continue;
-      Value *CalleeRoot = I.first;
-      MTEInfo *CalleeInfo = I.second;
-      MTEInfo *CurInfo = AssignedRoots[CalleeInfo->TagNum];
-      assert(CurInfo->isGlobalPtr);
-      if (CalleeInfo->Root == CurInfo->Root) // Good!
-        continue;
-      assert(CalleeInfo->Cost - getColoringOverhead(DL, CalleeInfo) < MTE_THRESHOLD);
-      cancelTagAssignmentGP(CalleeN, I.first);
-    }
-#endif
+    if (!CalleeN->TaggingDone)
+      assignTagsTopDown(DL, CalleeN, N, AssignedRoots, Stack);
   }
 }
 
