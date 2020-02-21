@@ -5831,7 +5831,7 @@ void SoftBoundCETSPass::calculateFinalMTECost(const DataLayout &DL, MTECGNode *N
   for (MTEInfoSortedTy::iterator I = MTEInfoSorted.begin(), E = MTEInfoSorted.end();
        I != E && i < 15; ++I, ++i)
     Cost += (*I).second->Cost;
-  SubTreeCost[N] = Cost;
+  N->Top15Cost = Cost;
 }
 
 double SoftBoundCETSPass::getColoringOverhead(const DataLayout &DL, MTEInfo *Info) {
@@ -6028,7 +6028,7 @@ void SoftBoundCETSPass::assignTagsTopDown(const DataLayout &DL, MTECGNode *N, MT
   // Visit callees according to the total bounds check cost of 15 frequently accessed objects
   DenseMap<MTECGNode *, double> CalleeCost;
   for (auto &I : N->CalleeFreq)
-    CalleeCost[I.first] = SubTreeCost[I.first] * I.second;
+    CalleeCost[I.first] = I.first->Top15Cost * I.second;
 
   std::multimap<double, MTECGNode*, std::greater<double> > CalleesSorted;
   for (auto &I : CalleeCost)

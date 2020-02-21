@@ -279,6 +279,7 @@ class SoftBoundCETSPass: public ModulePass {
   struct MTECGNode {
     SmallPtrSet<Function *, 4> Functions;
     DenseMap<MTECGNode *, double> CalleeFreq;
+    double Top15Cost; // cost of 15 most accessed objects
     bool isRecursive;
     bool mayNeedRecoloring;
     bool TaggingDone;
@@ -309,7 +310,6 @@ class SoftBoundCETSPass: public ModulePass {
   DenseMap<BasicBlock *, double> BlockFreq;
   DenseMap<BasicBlock *, bool> BBInLoop;
   DenseMap<Value *, SmallPtrSet<Argument *, 8> > RootArgMap;
-  DenseMap<MTECGNode *, double> SubTreeCost;
 
   typedef DenseMap<Value *, MTEInfo*> FuncMTEInfoTy;
   typedef DenseMap<GlobalVariable *, GPStoreInfo> FuncGPStoreInfoTy;
