@@ -278,9 +278,7 @@ class SoftBoundCETSPass: public ModulePass {
   /* MTE related data structures */
   struct MTECGNode {
     SmallPtrSet<Function *, 4> Functions;
-    SmallPtrSet<MTECGNode *, 8> Callees;
-    SmallPtrSet<CallInst *, 8> CallInsts;
-    SmallPtrSet<MTECGNode *, 8> Callers;
+    DenseMap<MTECGNode *, double> CalleeFreq;
     bool isRecursive;
     bool mayNeedRecoloring;
     bool TaggingDone;

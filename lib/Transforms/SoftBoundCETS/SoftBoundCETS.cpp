@@ -5516,7 +5516,6 @@ void SoftBoundCETSPass::buildMTECallGraph(Function *F, SmallVectorImpl<Function 
 
   Stack.push_back(F);
   SmallPtrSet<Function *, 8> Callees;
-  SmallPtrSet<CallInst *, 8> CallInsts;
   for (auto &BBI : F->getBasicBlockList()) {
     BasicBlock *BB = &BBI;
     for (auto &InstI : BB->getInstList()) {
@@ -5529,7 +5528,6 @@ void SoftBoundCETSPass::buildMTECallGraph(Function *F, SmallVectorImpl<Function 
       if (CI->isInlineAsm())
         continue;
 
-      CallInsts.insert(CI);
       Function *CallF = CI->getCalledFunction();
       SmallVector<Function *, 8> FuncsToVisit;
       if (!CallF) {
@@ -5564,16 +5562,6 @@ void SoftBoundCETSPass::buildMTECallGraph(Function *F, SmallVectorImpl<Function 
     CGN = FuncCGNodeMap[F];
   }
 
-  for (Function *Callee : Callees) {
-    assert(FuncCGNodeMap.count(Callee));
-    MTECGNode *CalleeCGN = FuncCGNodeMap[Callee];
-    if (CGN != CalleeCGN) {
-      CGN->Callees.insert(CalleeCGN);
-      CalleeCGN->Callers.insert(CGN);
-    }
-  }
-
-  CGN->CallInsts = CallInsts;
   assert(CGN->Functions.size() < 3);
 }
 
@@ -5746,6 +5734,8 @@ void SoftBoundCETSPass::calculateFinalMTECost(const DataLayout &DL, MTECGNode *N
           MTECGNode *CalleeN = FuncCGNodeMap[Callee];
 
           assert(CalleeN != N && "Indirect call to self??");
+
+          N->CalleeFreq[CalleeN] += BlockFreq[BB] / NFuncs;
 
           if (!MTECostAvailable.count(CalleeN))
             calculateFinalMTECost(DL, CalleeN);
@@ -5926,7 +5916,7 @@ void SoftBoundCETSPass::assignTagsTopDown(const DataLayout &DL, MTECGNode *N, MT
     bool AssignTag = false;
     if (isa<Constant>(Root)) {
       if (!CurInfo->isGlobalPtr) {
-        if (Cost > MTE_THRESHOLD && N->Callees.empty())
+        if (Cost > MTE_THRESHOLD && N->CalleeFreq.empty())
           assert(ParentMTEInfo && ParentMTEInfo->count(Root) && ParentMTEInfo->lookup(Root)->TagAssigned);
         if (ParentMTEInfo && ParentMTEInfo->count(Root) && ParentMTEInfo->lookup(Root)->TagAssigned) {
           int TagNum = ParentMTEInfo->lookup(Root)->TagNum;
@@ -6050,35 +6040,8 @@ void SoftBoundCETSPass::assignTagsTopDown(const DataLayout &DL, MTECGNode *N, MT
 
   // Visit callees according to the total bounds check cost of 15 frequently accessed objects
   DenseMap<MTECGNode *, double> CalleeCost;
-  for (CallInst *CI : N->CallInsts) {
-    Function *CallF = CI->getCalledFunction();
-    SmallVector<Function *, 8> FuncsToVisit;
-    if (!CallF) {
-      Value *Stripped = CI->getCalledValue()->stripPointerCasts();
-      if (isa<Function>(Stripped))
-        CallF = cast<Function>(Stripped);
-    }
-
-    if (!CallF) {
-      if (IndCallTargets.count(CI))
-        FuncsToVisit.append(IndCallTargets[CI].begin(), IndCallTargets[CI].end());
-      else
-        FuncsToVisit.append(IndCallTargets[NULL].begin(), IndCallTargets[NULL].end());
-    } else if (checkIfFunctionOfInterest(CallF)) {
-      // Avoid infinite loop due to recursive func
-      if (FuncCGNodeMap[CallF] == N)
-        continue;
-      FuncsToVisit.push_back(CallF);
-    } else {
-      continue;
-    }
-
-    const int NFuncs = FuncsToVisit.size();
-    for (Function *Callee : FuncsToVisit) {
-      MTECGNode *CalleeN = FuncCGNodeMap[Callee];
-      CalleeCost[CalleeN] += SubTreeCost[CalleeN] * BlockFreq[CI->getParent()] / NFuncs;
-    }
-  }
+  for (auto &I : N->CalleeFreq)
+    CalleeCost[I.first] = SubTreeCost[I.first] * I.second;
 
   std::multimap<double, MTECGNode*, std::greater<double> > CalleesSorted;
   for (auto &I : CalleeCost)
