@@ -279,7 +279,9 @@ class SoftBoundCETSPass: public ModulePass {
   struct MTECGNode {
     SmallPtrSet<Function *, 4> Functions;
     DenseMap<MTECGNode *, double> CalleeFreq;
+    DenseMap<MTECGNode *, bool> Callers;
     double Top15Cost; // cost of 15 most accessed objects
+    double Freq; // execution frequency of this node
     bool isRecursive;
     bool mayNeedRecoloring;
     bool TaggingDone;
@@ -333,6 +335,7 @@ class SoftBoundCETSPass: public ModulePass {
   void saveBlockFreq(Function *F);
   void calculateMTECostForFunc(Function *F);
   void calculateFinalMTECost(const DataLayout &DL, MTECGNode *N);
+  void calculateNodeFreq();
   double getColoringOverhead(const DataLayout &DL, MTEInfo *Info);
   void assignTagsTopDown(const DataLayout &DL, MTECGNode *N, MTECGNode *Parent);
 

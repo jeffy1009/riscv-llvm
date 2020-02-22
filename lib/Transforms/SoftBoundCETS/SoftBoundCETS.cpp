@@ -5562,6 +5562,15 @@ void SoftBoundCETSPass::buildMTECallGraph(Function *F, SmallVectorImpl<Function 
     CGN = FuncCGNodeMap[F];
   }
 
+  for (Function *Callee : Callees) {
+    assert(FuncCGNodeMap.count(Callee));
+    MTECGNode *CalleeCGN = FuncCGNodeMap[Callee];
+    if (CGN != CalleeCGN) {
+      CGN->CalleeFreq[CalleeCGN] = 0;
+      CalleeCGN->Callers[CGN] = false;
+    }
+  }
+
   assert(CGN->Functions.size() < 3);
 }
 
@@ -5832,6 +5841,36 @@ void SoftBoundCETSPass::calculateFinalMTECost(const DataLayout &DL, MTECGNode *N
        I != E && i < 15; ++I, ++i)
     Cost += (*I).second->Cost;
   N->Top15Cost = Cost;
+}
+
+void SoftBoundCETSPass::calculateNodeFreq() {
+  SmallVector<MTECGNode *, 8> WorkList;
+  FuncCGNodeMap[MainFunc]->Freq = 1;
+  WorkList.push_back(FuncCGNodeMap[MainFunc]);
+  while (!WorkList.empty()) {
+    MTECGNode *CurN = WorkList.pop_back_val();
+    for (auto &I : CurN->CalleeFreq) {
+      MTECGNode *CalleeN = I.first;
+      CalleeN->Freq += CurN->Freq * I.second;
+      assert(CalleeN->Callers[CurN] == false);
+      CalleeN->Callers[CurN] = true;
+      if (std::all_of(CalleeN->Callers.begin(), CalleeN->Callers.end(),
+                      [](std::pair<MTECGNode *, bool> &I){return I.second;}))
+        WorkList.push_back(CalleeN);
+    }
+  }
+
+  // check that all nodes are visited
+  WorkList.push_back(FuncCGNodeMap[MainFunc]);
+  SmallPtrSet<MTECGNode *, 16> Visited;
+  while (!WorkList.empty()) {
+    MTECGNode *CurN = WorkList.pop_back_val();
+    assert(std::all_of(CurN->Callers.begin(), CurN->Callers.end(),
+                       [](std::pair<MTECGNode *, bool> &I){return I.second;}));
+    for (auto &I : CurN->CalleeFreq)
+      if (Visited.insert(I.first).second)
+        WorkList.push_back(I.first);
+  }
 }
 
 double SoftBoundCETSPass::getColoringOverhead(const DataLayout &DL, MTEInfo *Info) {
@@ -6203,6 +6242,7 @@ bool SoftBoundCETSPass::runOnModule(Module& module) {
 
     MTECGNode *MainFuncCGN = FuncCGNodeMap[MainFunc];
     calculateFinalMTECost(module.getDataLayout(), MainFuncCGN);
+    calculateNodeFreq();
 
     assignTagsTopDown(module.getDataLayout(), MainFuncCGN, NULL);
   }
