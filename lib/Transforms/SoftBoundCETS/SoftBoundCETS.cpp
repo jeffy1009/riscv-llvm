@@ -1531,7 +1531,8 @@ void SoftBoundCETSPass::handlePHIPass2(PHINode* phi_node) {
 
           Function * PHI_func = phi_node->getParent()->getParent();
           BasicBlock::iterator It = PHI_func->begin()->getFirstInsertionPt();
-          while (isa<AllocaInst>(*It) || isa<DbgInfoIntrinsic>(*It))
+          while (isa<AllocaInst>(*It) || isa<DbgInfoIntrinsic>(*It)
+                 || isa<BitCastInst>(*It))
             ++It;
           Instruction* PHI_func_entry = &*It;
 
@@ -1567,7 +1568,8 @@ void SoftBoundCETSPass::handlePHIPass2(PHINode* phi_node) {
 
           Function* PHI_func = phi_node->getParent()->getParent();
           BasicBlock::iterator It = PHI_func->begin()->getFirstInsertionPt();
-          while (isa<AllocaInst>(*It) || isa<DbgInfoIntrinsic>(*It))
+          while (isa<AllocaInst>(*It) || isa<DbgInfoIntrinsic>(*It)
+                 || isa<BitCastInst>(*It))
             ++It;
           Instruction* PHI_func_entry = &*It;
 
@@ -4064,7 +4066,8 @@ void SoftBoundCETSPass::handleAlloca (AllocaInst* alloca_inst,
 
     BasicBlock::iterator It = i;
     It++;
-    while (isa<AllocaInst>(*It) || isa<DbgInfoIntrinsic>(*It))
+    while (isa<AllocaInst>(*It) || isa<DbgInfoIntrinsic>(*It)
+           || isa<BitCastInst>(*It))
       ++It;
 
     Instruction* next = dyn_cast<Instruction>(It);
@@ -4835,7 +4838,8 @@ void SoftBoundCETSPass::gatherBaseBoundPass1 (Function * func) {
     Argument* ptr_argument = dyn_cast<Argument>(ib);
     Value* ptr_argument_value = ptr_argument;
     BasicBlock::iterator It = func->begin()->getFirstInsertionPt();
-    while (isa<AllocaInst>(*It) || isa<DbgInfoIntrinsic>(*It))
+    while (isa<AllocaInst>(*It) || isa<DbgInfoIntrinsic>(*It)
+           || isa<BitCastInst>(*It))
       ++It;
     Instruction* fst_inst = &*It;
 
@@ -6350,7 +6354,8 @@ bool SoftBoundCETSPass::runOnModule(Module& module) {
           cast<GlobalVariable>(Root)->setConstant(false);
           getConstantExprBaseBound(given_constant, tmp_base, tmp_bound);
           BasicBlock::iterator It = func_ptr->getEntryBlock().getFirstInsertionPt();
-          while (isa<AllocaInst>(*It) || isa<DbgInfoIntrinsic>(*It))
+          while (isa<AllocaInst>(*It) || isa<DbgInfoIntrinsic>(*It)
+                 || isa<BitCastInst>(*It))
             ++It;
           InsertPos = &*It;
         } else {
