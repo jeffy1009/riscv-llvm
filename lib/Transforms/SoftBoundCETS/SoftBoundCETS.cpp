@@ -5896,21 +5896,146 @@ double SoftBoundCETSPass::getColoringOverhead(const DataLayout &DL, MTEInfo *Inf
   return Size * MTE_SIZE_PENALTY * BBFreq;
 }
 
-void SoftBoundCETSPass::assignTagsTopDown(const DataLayout &DL, MTECGNode *N, MTECGNode *Parent) {
+double SoftBoundCETSPass::calcTagReplaceCost(MTECGNode *N, Value *Root,
+                                             SmallPtrSetImpl<MTECGNode*> &SubG) {
+  SmallVector<std::pair<MTECGNode *, Value *>, 8> WorkList;
+  DenseMap<MTECGNode *, SmallPtrSet<Value *, 4> > Visited;
+  double TotalCost = 0;
+  WorkList.push_back(std::make_pair(N, Root));
+  while (!WorkList.empty()) {
+    auto CurI =  WorkList.pop_back_val();
+    MTECGNode *CurN = CurI.first;
+    Value *CurR = CurI.second;
+    for (auto &I : CurN->CalleeFreq) {
+      MTECGNode *CalleeN = I.first;
+      if (RootArgMap.count(CurR) && !CalleeN->isRecursive) { // TODO: handle recursive
+        for (Argument *Arg : RootArgMap[CurR]) {
+          if (!ModuleMTEInfo[CalleeN].count(Arg))
+            continue;
+          if (SubG.count(CalleeN)) {
+            TotalCost += CurN->Freq * I.second * ModuleMTEInfo[CalleeN][Arg]->Cost;
+          } else {
+            if (Visited[CalleeN].insert(Arg).second)
+              WorkList.push_back(std::make_pair(CalleeN, Arg));
+          }
+        }
+      }
+
+      if (!ModuleMTEInfo[CalleeN].count(CurR))
+        continue;
+
+      if (SubG.count(CalleeN)) {
+        TotalCost += CurN->Freq * I.second * ModuleMTEInfo[CalleeN][CurR]->Cost;
+      } else {
+        if (Visited[CalleeN].insert(Root).second)
+          WorkList.push_back(std::make_pair(CalleeN, Root));
+      }
+    }
+  }
+
+  return TotalCost;
+}
+
+double SoftBoundCETSPass::calcTagReplaceCostGP(MTECGNode *N, Value *Root,
+                                               SmallPtrSetImpl<MTECGNode*> &SubG) {
+  SmallVector<MTECGNode *, 8> WorkList;
+  SmallPtrSet<MTECGNode *, 16> Visited;
+  double TotalCost = 0;
+  WorkList.push_back(N);
+  while (!WorkList.empty()) {
+    MTECGNode *CurN = WorkList.pop_back_val();
+    for (auto &I : CurN->CalleeFreq) {
+      MTECGNode *CalleeN = I.first;
+      if (!ModuleGlobalPtrInfo[CalleeN].count(Root))
+        continue;
+
+      if (SubG.count(CalleeN)) {
+        TotalCost += CurN->Freq * I.second * ModuleGlobalPtrInfo[CalleeN][Root]->Cost;
+      } else {
+        if (Visited.insert(CalleeN).second)
+          WorkList.push_back(CalleeN);
+      }
+    }
+  }
+
+  return TotalCost;
+}
+
+void SoftBoundCETSPass::assignTagsTopDown(const DataLayout &DL, MTECGNode *N,
+                                          SmallVectorImpl<MTECGNode *> &Stack) {
   dbgs() << "========= Assigning tags for node " << N << ": ";
   for (Function *F : N->Functions)
     dbgs() << F->getName() << " ";
   dbgs() << '\n';
 
+  Stack.push_back(N);
+
   FuncMTEInfoTy *ParentMTEInfo = NULL;
   FuncMTEInfoTy *ParentGlobalPtrInfo = NULL;
-  if (Parent) {
+  MTEInfoSortedAscTy RepCostSorted;
+  int FirstNotAssigned = 0;
+  if (Stack.size() > 1) {
+    MTECGNode *Parent = *(Stack.end()-2);
     dbgs() << "         called from node " << Parent << ": ";
     for (Function *F : Parent->Functions)
       dbgs() << F->getName() << " ";
     dbgs() << '\n';
     ParentMTEInfo = &ModuleMTEInfo[Parent];
     ParentGlobalPtrInfo = &ModuleGlobalPtrInfo[Parent];
+
+    // Get nodes reachable from CurN
+    SmallPtrSet<MTECGNode *, 8> SubG;
+    SmallVector<MTECGNode *, 8> WorkList;
+    WorkList.push_back(N);
+    while (!WorkList.empty()) {
+      MTECGNode *CurN = WorkList.pop_back_val();
+      if (!SubG.insert(CurN).second)
+        continue;
+      for (auto &I : CurN->CalleeFreq)
+        WorkList.push_back(I.first);
+    }
+
+    for (int i = 1; i < 16; i++) {
+      auto It = Stack.end()-2;
+      while (It != Stack.begin() && !ModuleMTEInfoAssigned[*It][i])
+        --It;
+      if (It == Stack.begin() && !ModuleMTEInfoAssigned[*It][i]) {
+        RepCostSorted.insert(std::make_pair(-1, (MTEInfo*)NULL));
+        if (!FirstNotAssigned)
+          FirstNotAssigned = i;
+        continue;
+      }
+
+      MTEInfo *Info = ModuleMTEInfoAssigned[*It][i];
+      Value *Root = Info->Root;
+      double RepCost = 0;
+      if (isa<Constant>(Root)) {
+        if (!Info->isGlobalPtr)
+          RepCost = calcTagReplaceCost(FuncCGNodeMap[MainFunc], Root, SubG);
+        else
+          RepCost = calcTagReplaceCostGP(FuncCGNodeMap[MainFunc], Root, SubG);
+      } else if (isa<Argument>(Root)) {
+        // DenseMap<MTECGNode *, SmallPtrSet<Value *, 4> > WorkList;
+        // Value *CurR = Root;
+        // while (It != Stack.begin()) {
+        //   --It;
+        assert(It != Stack.begin());
+        double CurFreq = (*It)->Freq;
+        --It;
+        for (auto &I : ModuleMTEInfo[*It]) {
+          if (!RootArgMap[I.first].count(cast<Argument>(Root)))
+            continue;
+          assert(!isa<Argument>(I.first));
+          RepCost += calcTagReplaceCost(*It, I.first, SubG) * (*It)->Freq;
+        }
+        // break;
+        // }
+        RepCost *= CurFreq;
+      } else {
+        RepCost = calcTagReplaceCost(*It, Root, SubG) * (*It)->Freq;
+      }
+      RepCostSorted.insert(std::make_pair(RepCost, Info));
+    }
   }
 
   MTEInfoSortedTy MTEInfoSorted;
@@ -5939,7 +6064,6 @@ void SoftBoundCETSPass::assignTagsTopDown(const DataLayout &DL, MTECGNode *N, MT
     Value *Root = CurInfo->Root;
     double Cost = (*I).first;
 
-    bool AssignTag = false;
     if (isa<Constant>(Root)) {
       if (!CurInfo->isGlobalPtr) {
         if (Cost > MTE_THRESHOLD && N->CalleeFreq.empty())
@@ -5950,7 +6074,7 @@ void SoftBoundCETSPass::assignTagsTopDown(const DataLayout &DL, MTECGNode *N, MT
           CurInfo->TagNum = TagNum;
           assert(!AssignedRoots[TagNum]);
           AssignedRoots[TagNum] = CurInfo;
-          AssignTag = true;
+          CurInfo->TagAssigned = true;
         }
       } else {
         if (ParentGlobalPtrInfo && ParentGlobalPtrInfo->count(Root)
@@ -5962,7 +6086,7 @@ void SoftBoundCETSPass::assignTagsTopDown(const DataLayout &DL, MTECGNode *N, MT
           N->mayNeedRecoloring = true;
           assert(!AssignedRoots[TagNum]);
           AssignedRoots[TagNum] = CurInfo;
-          AssignTag = true;
+          CurInfo->TagAssigned = true;
         }
       }
     }
@@ -5985,55 +6109,78 @@ void SoftBoundCETSPass::assignTagsTopDown(const DataLayout &DL, MTECGNode *N, MT
         N->mayNeedRecoloring = true;
         //assert(!AssignedRoots[TagNum]); // different arguments may have same actual arg in caller
         AssignedRoots[TagNum] = CurInfo;
-        AssignTag = true;
+        CurInfo->TagAssigned = true;
       }
     }
 
-    if (!AssignTag) {
-      if (Cost > MTE_THRESHOLD)
-        Temp.push_back(CurInfo);
-      else
-        continue;
-    }
-
-    CurInfo->TagAssigned = true;
+    if (!CurInfo->TagAssigned && Cost > MTE_THRESHOLD)
+      Temp.push_back(CurInfo);
   }
 
   // Assign tag number for the newly tagged objects
-  i = 1;
   bool NewlyTagged[16] = {false};
-  for (MTEInfo *I : Temp) {
-    while (AssignedRoots[i]) i++;
-    assert(i < 16);
-    I->TagNum = i;
-    I->NeedColoringCode = true;
-    N->mayNeedRecoloring = true;
-    AssignedRoots[i] = I;
-    NewlyTagged[i] = true;
-    i++;
+  if (Stack.size() > 1) {
+    auto RCSI = RepCostSorted.begin();
+    for (MTEInfo *I : Temp) {
+      if ((I->Cost - getColoringOverhead(DL, I)) * N->Freq < (*RCSI).first)
+        break;
+      MTEInfo *RepInfo = (*RCSI).second;
+      int TagNum = RepInfo ? RepInfo->TagNum : FirstNotAssigned++;
+      assert(!AssignedRoots[TagNum]);
+      I->TagNum = TagNum;
+      I->TagAssigned = true;
+      I->NeedColoringCode = true;
+      N->mayNeedRecoloring = true;
+      AssignedRoots[TagNum] = I;
+      NewlyTagged[TagNum] = true;
+      ++RCSI;
+      assert(RCSI != RepCostSorted.end());
+    }
+  } else {
+    i = 1;
+    for (MTEInfo *I : Temp) {
+      while (AssignedRoots[i]) i++;
+      assert(i < 16);
+      I->TagAssigned = true;
+      I->TagNum = i;
+      I->NeedColoringCode = true;
+      N->mayNeedRecoloring = true;
+      AssignedRoots[i] = I;
+      NewlyTagged[i] = true;
+      i++;
+    }
   }
 
   // Print tagged objects
   i = 0;
+  ModuleMTEInfoAssigned[N].resize(16);
+  int PrintNotAssigned = 4;
   for (MTEInfoSortedTy::iterator I = MTEInfoSorted.begin(), E = MTEInfoSorted.end();
        I != E; ++I) {
     MTEInfo *CurInfo = (*I).second;
     Value *Root = CurInfo->Root;
     double Cost = (*I).first;
-    if (!CurInfo->TagAssigned)
-      continue;
+    if (!CurInfo->TagAssigned) {
+      if (PrintNotAssigned)
+        dbgs() << "[NOT assigned] ";
+      else
+        continue;
+      --PrintNotAssigned;
+    }
+    ModuleMTEInfoAssigned[N][CurInfo->TagNum] = CurInfo;
     Root->dump();
-    dbgs() << "    Cost: " << Cost << " Tag: " << CurInfo->TagNum;
+    dbgs() << "    Cost: " << Cost;
+    if (CurInfo->TagAssigned) dbgs() << " Tag: " << CurInfo->TagNum;
     if (CurInfo->isGlobalPtr) dbgs() << " [GlobalPtr]";
-    if (NewlyTagged[CurInfo->TagNum]) dbgs() << " [New] ";
+    if (CurInfo->TagAssigned && NewlyTagged[CurInfo->TagNum]) dbgs() << " [New] ";
     dbgs() << '\n';
-    ++i;
+    if (CurInfo->TagAssigned) ++i;
   }
   dbgs() << '\n';
   assert(i < 16);
 
   // Print tag unassigned global objects
-  if (Parent) {
+  if (Stack.size() > 1) {
     dbgs() << "The following objects will be untagged in this function...\n";
     for (auto &I : *ParentMTEInfo) {
       MTEInfo *CurInfo = I.second;
@@ -6076,8 +6223,9 @@ void SoftBoundCETSPass::assignTagsTopDown(const DataLayout &DL, MTECGNode *N, MT
   for (auto &I : CalleesSorted) {
     MTECGNode *CalleeN = I.second;
     if (!CalleeN->TaggingDone)
-      assignTagsTopDown(DL, CalleeN, N, AssignedRoots, Stack);
+      assignTagsTopDown(DL, CalleeN, Stack);
   }
+  Stack.pop_back();
 }
 
 bool SoftBoundCETSPass::runOnModule(Module& module) {
@@ -6244,7 +6392,8 @@ bool SoftBoundCETSPass::runOnModule(Module& module) {
     calculateFinalMTECost(module.getDataLayout(), MainFuncCGN);
     calculateNodeFreq();
 
-    assignTagsTopDown(module.getDataLayout(), MainFuncCGN, NULL);
+    SmallVector<MTECGNode *, 8> Stack;
+    assignTagsTopDown(module.getDataLayout(), MainFuncCGN, Stack);
   }
 
   for(Module::iterator ff_begin = module.begin(), ff_end = module.end();

@@ -316,9 +316,11 @@ class SoftBoundCETSPass: public ModulePass {
   typedef DenseMap<Value *, MTEInfo*> FuncMTEInfoTy;
   typedef DenseMap<GlobalVariable *, GPStoreInfo> FuncGPStoreInfoTy;
   typedef std::multimap<double, MTEInfo*, std::greater<double> > MTEInfoSortedTy;
+  typedef std::multimap<double, MTEInfo*> MTEInfoSortedAscTy;
   DenseMap<MTECGNode *, FuncMTEInfoTy>  ModuleMTEInfo;
   DenseMap<MTECGNode *, FuncGPStoreInfoTy> ModuleGPStoreInfo;
   DenseMap<MTECGNode *, FuncMTEInfoTy>  ModuleGlobalPtrInfo;
+  DenseMap<MTECGNode *, SmallVector<MTEInfo *, 16> > ModuleMTEInfoAssigned;
 
   SmallPtrSet<MTECGNode *, 32> MTECostAvailable;
 
@@ -337,7 +339,12 @@ class SoftBoundCETSPass: public ModulePass {
   void calculateFinalMTECost(const DataLayout &DL, MTECGNode *N);
   void calculateNodeFreq();
   double getColoringOverhead(const DataLayout &DL, MTEInfo *Info);
-  void assignTagsTopDown(const DataLayout &DL, MTECGNode *N, MTECGNode *Parent);
+  double calcTagReplaceCost(MTECGNode *N, Value *Root,
+                            SmallPtrSetImpl<MTECGNode*> &SubG);
+  double calcTagReplaceCostGP(MTECGNode *N, Value *Root,
+                              SmallPtrSetImpl<MTECGNode*> &SubG);
+  void assignTagsTopDown(const DataLayout &DL, MTECGNode *N,
+                         SmallVectorImpl<MTECGNode *> &Stack);
 
   void initializeSoftBoundVariables(Module&);
   void identifyOriginalInst(Function*);
