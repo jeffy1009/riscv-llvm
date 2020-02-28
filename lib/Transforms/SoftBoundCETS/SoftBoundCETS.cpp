@@ -5821,7 +5821,9 @@ void SoftBoundCETSPass::calculateFinalMTECost(const DataLayout &DL, MTECGNode *N
   MTEInfoSortedTy MTEInfoSorted;
   FuncMTEInfoTy &FuncMTEInfo = ModuleMTEInfo[N];
   for (auto &I : FuncMTEInfo) {
-    double Cost = I.second->Cost - getColoringOverhead(DL, I.second);
+    double Cost = I.second->Cost;
+    if (!isa<Constant>(I.first) && !isa<Argument>(I.first))
+      Cost -= getColoringOverhead(DL, I.second);
     MTEInfoSorted.insert(std::pair<double, MTEInfo*>(Cost, I.second));
   }
 
@@ -5831,15 +5833,14 @@ void SoftBoundCETSPass::calculateFinalMTECost(const DataLayout &DL, MTECGNode *N
     FuncGPStoreInfoTy &MainFuncGPStoreInfo = ModuleGPStoreInfo[FuncCGNodeMap[MainFunc]];
     if (MainFuncGPStoreInfo[GPRoot].Cost > MTE_GPSTORE_FREQ_THRESHOLD)
       continue;
-    double Cost = I.second->Cost - getColoringOverhead(DL, I.second);
-    MTEInfoSorted.insert(std::pair<double, MTEInfo*>(Cost, I.second));
+    MTEInfoSorted.insert(std::pair<double, MTEInfo*>(I.second->Cost, I.second));
   }
 
   double Cost = 0;
   int i = 0;
   for (MTEInfoSortedTy::iterator I = MTEInfoSorted.begin(), E = MTEInfoSorted.end();
        I != E && i < 15; ++I, ++i)
-    Cost += (*I).second->Cost;
+    Cost += (*I).first;
   N->Top15Cost = Cost;
 }
 
