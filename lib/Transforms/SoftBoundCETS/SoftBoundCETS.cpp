@@ -6060,7 +6060,7 @@ void SoftBoundCETSPass::assignTagsTopDown(const DataLayout &DL, MTECGNode *N,
   MTEInfo *AssignedRoots[16] = {NULL};
   SmallVector<MTEInfo*, 8> Temp;
   for (MTEInfoSortedTy::iterator I = MTEInfoSorted.begin(), E = MTEInfoSorted.end();
-       I != E && i < 15; ++I, ++i) {  // Select 15 objects
+       I != E && i < 15; ++I) {  // Select 15 objects
     MTEInfo *CurInfo = (*I).second;
     Value *Root = CurInfo->Root;
     double Cost = (*I).first;
@@ -6114,8 +6114,13 @@ void SoftBoundCETSPass::assignTagsTopDown(const DataLayout &DL, MTECGNode *N,
       }
     }
 
-    if (!CurInfo->TagAssigned && Cost > MTE_THRESHOLD)
+    if (CurInfo->TagAssigned)
+      ++i;
+
+    if (!CurInfo->TagAssigned && Cost > MTE_THRESHOLD) {
+      ++i;
       Temp.push_back(CurInfo);
+    }
   }
 
   // Assign tag number for the newly tagged objects
