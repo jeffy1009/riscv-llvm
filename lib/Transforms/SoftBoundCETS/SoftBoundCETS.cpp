@@ -5831,7 +5831,8 @@ void SoftBoundCETSPass::calculateFinalMTECost(const DataLayout &DL, MTECGNode *N
   for (auto &I : FuncGlobalPtrInfo) {
     GlobalVariable *GPRoot = cast<GlobalVariable>(I.first->stripInBoundsConstantOffsets());
     FuncGPStoreInfoTy &MainFuncGPStoreInfo = ModuleGPStoreInfo[FuncCGNodeMap[MainFunc]];
-    if (MainFuncGPStoreInfo[GPRoot].Cost > MTE_GPSTORE_FREQ_THRESHOLD)
+    if (MainFuncGPStoreInfo[GPRoot].Cost > MTE_GPSTORE_FREQ_THRESHOLD
+        && !GPStoreList.count(GPRoot))
       continue;
     MTEInfoSorted.insert(std::pair<double, MTEInfo*>(I.second->Cost, I.second));
   }
@@ -6050,7 +6051,8 @@ void SoftBoundCETSPass::assignTagsTopDown(const DataLayout &DL, MTECGNode *N,
   for (auto &I : FuncGlobalPtrInfo) {
     GlobalVariable *GPRoot = cast<GlobalVariable>(I.first->stripInBoundsConstantOffsets());
     FuncGPStoreInfoTy &MainFuncGPStoreInfo = ModuleGPStoreInfo[FuncCGNodeMap[MainFunc]];
-    if (MainFuncGPStoreInfo[GPRoot].Cost > MTE_GPSTORE_FREQ_THRESHOLD)
+    if (MainFuncGPStoreInfo[GPRoot].Cost > MTE_GPSTORE_FREQ_THRESHOLD
+        && !GPStoreList.count(GPRoot))
       continue;
     double Cost = I.second->Cost - getColoringOverhead(DL, I.second);
     MTEInfoSorted.insert(std::pair<double, MTEInfo*>(Cost, I.second));
@@ -6377,6 +6379,14 @@ bool SoftBoundCETSPass::runOnModule(Module& module) {
       }
       if (IsGPStoreCand)
         GPStoreCand.insert(&G);
+    }
+
+    static char const *GPSTORE_GLOBALS[] = {"try_swap.bb_coord_new", "try_swap.bb_edge_new",
+                                            "try_swap.net_block_moved", "try_swap.nets_to_update"};
+    for (int i = 0; i < sizeof(GPSTORE_GLOBALS) / sizeof(GPSTORE_GLOBALS[0]); i++) {
+      GlobalVariable *gv = module.getGlobalVariable(GPSTORE_GLOBALS[i], true);
+      if (gv)
+        GPStoreList.insert(gv);
     }
 
     MainFunc = module.getFunction("softboundcets_pseudo_main");
