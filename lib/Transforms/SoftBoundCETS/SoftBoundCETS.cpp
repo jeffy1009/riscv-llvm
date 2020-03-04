@@ -6026,7 +6026,7 @@ void SoftBoundCETSPass::assignTagsTopDown(const DataLayout &DL, MTECGNode *N,
         for (auto &I : ModuleMTEInfo[*It]) {
           if (!RootArgMap[I.first].count(cast<Argument>(Root)))
             continue;
-          assert(!isa<Argument>(I.first));
+          //assert(!isa<Argument>(I.first));
           RepCost += calcTagReplaceCost(*It, I.first, SubG) * (*It)->Freq;
         }
         // break;
@@ -6482,6 +6482,9 @@ bool SoftBoundCETSPass::runOnModule(Module& module) {
           }
           tmp_base = getAssociatedBase(Root);
           tmp_bound = getAssociatedBound(Root);
+
+          if(cast<ConstantExpr>(tmp_bound))
+            continue;
           InsertPos = getNextInstruction(cast<Instruction>(tmp_bound));
           if (isa<PHINode>(InsertPos))
             InsertPos = &*InsertPos->getParent()->getFirstInsertionPt();
