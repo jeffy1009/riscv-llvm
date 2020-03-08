@@ -5686,10 +5686,6 @@ void SoftBoundCETSPass::calculateMTECostForFunc(Function *F) {
         }
       }
 
-      // TODO: support roots inside loops
-      if (isa<Instruction>(Root) && BBInLoop[cast<Instruction>(Root)->getParent()])
-        continue;
-
       if (!FuncMTEInfo.count(Root)) {
         MTEInfo *New = new MTEInfo();
         New->Root = Root;
@@ -5759,6 +5755,8 @@ void SoftBoundCETSPass::calculateFinalMTECost(const DataLayout &DL, MTECGNode *N
 
           FuncMTEInfoTy &FuncMTEInfo = ModuleMTEInfo[FuncCGNodeMap[F]];
           FuncMTEInfoTy &CalleeMTEInfo = ModuleMTEInfo[CalleeN];
+          FuncMTEInfoTy &FuncGlobalPtrInfo = ModuleGlobalPtrInfo[FuncCGNodeMap[F]];
+          FuncMTEInfoTy &CalleeGlobalPtrInfo = ModuleGlobalPtrInfo[CalleeN];
           for (auto &I : CalleeMTEInfo) {
             Value *Root = I.first;
             if (isa<Argument>(Root) && !CalleeN->isRecursive) { // TODO: handle recursive functions
@@ -5774,9 +5772,23 @@ void SoftBoundCETSPass::calculateFinalMTECost(const DataLayout &DL, MTECGNode *N
                 continue;
               assert(PtrRootMap.count(ActualArg));
               Value *ActualRoot = PtrRootMap[ActualArg];
-              // TODO: support roots inside loop
-              if (isa<Instruction>(ActualRoot) && BBInLoop[cast<Instruction>(ActualRoot)->getParent()])
-                continue;
+
+              if (LoadInst *LI = dyn_cast<LoadInst>(ActualRoot)) {
+                Value *GlobalPtr = LI->getPointerOperand();
+                if (isa<GlobalVariable>(GlobalPtr)) {
+                  if (!GPStoreCand.count(cast<GlobalVariable>(GlobalPtr)))
+                    continue;
+
+                  if (!FuncGlobalPtrInfo.count(GlobalPtr)) {
+                    MTEInfo *New = new MTEInfo();
+                    New->Root = GlobalPtr;
+                    New->isGlobalPtr = true;
+                    FuncGlobalPtrInfo[GlobalPtr] = New;
+                  }
+                  FuncGlobalPtrInfo[GlobalPtr]->Cost += BlockFreq[BB];
+                  RootArgMap[ActualRoot].insert(cast<Argument>(Root));
+                }
+              }
 
               if (!FuncMTEInfo.count(ActualRoot)) {
                 MTEInfo *New = new MTEInfo();
@@ -5799,8 +5811,6 @@ void SoftBoundCETSPass::calculateFinalMTECost(const DataLayout &DL, MTECGNode *N
             }
           }
 
-          FuncMTEInfoTy &FuncGlobalPtrInfo = ModuleGlobalPtrInfo[FuncCGNodeMap[F]];
-          FuncMTEInfoTy &CalleeGlobalPtrInfo = ModuleGlobalPtrInfo[CalleeN];
           for (auto &I : CalleeGlobalPtrInfo) {
             Value *GlobalPtr = I.first;
             assert(GPStoreCand.count(cast<GlobalVariable>(GlobalPtr)));
@@ -6070,8 +6080,8 @@ void SoftBoundCETSPass::assignTagsTopDown(const DataLayout &DL, MTECGNode *N,
 
     if (isa<Constant>(Root)) {
       if (!CurInfo->isGlobalPtr) {
-        if (Cost > MTE_THRESHOLD && N->CalleeFreq.empty())
-          assert(ParentMTEInfo && ParentMTEInfo->count(Root) && ParentMTEInfo->lookup(Root)->TagAssigned);
+        // if (Cost > MTE_THRESHOLD && N->CalleeFreq.empty())
+        //   assert(ParentMTEInfo && ParentMTEInfo->count(Root) && ParentMTEInfo->lookup(Root)->TagAssigned);
         if (ParentMTEInfo && ParentMTEInfo->count(Root) && ParentMTEInfo->lookup(Root)->TagAssigned) {
           int TagNum = ParentMTEInfo->lookup(Root)->TagNum;
           assert(TagNum);
@@ -6105,7 +6115,29 @@ void SoftBoundCETSPass::assignTagsTopDown(const DataLayout &DL, MTECGNode *N,
               ArgRoot = ParentRoot;
         }
       }
-      if (ArgRoot && ParentMTEInfo->lookup(ArgRoot)->TagAssigned) {
+
+      if (!ArgRoot)
+        goto out;
+
+      if (LoadInst *LI = dyn_cast<LoadInst>(ArgRoot)) {
+        Value *GlobalPtr = LI->getPointerOperand();
+        if (isa<GlobalVariable>(GlobalPtr)) {
+          if (!GPStoreCand.count(cast<GlobalVariable>(GlobalPtr)))
+            continue;
+          if (ParentGlobalPtrInfo->lookup(GlobalPtr)->TagAssigned) {
+            int TagNum = ParentGlobalPtrInfo->lookup(GlobalPtr)->TagNum;
+            assert(TagNum);
+            CurInfo->TagNum = TagNum;
+            CurInfo->NeedColoringCode = true;
+            N->mayNeedRecoloring = true;
+            AssignedRoots[TagNum] = CurInfo;
+            CurInfo->TagAssigned = true;
+            goto out;
+          }
+        }
+      }
+
+      if (ParentMTEInfo->lookup(ArgRoot)->TagAssigned) {
         int TagNum = ParentMTEInfo->lookup(ArgRoot)->TagNum;
         assert(TagNum);
         CurInfo->TagNum = TagNum;
@@ -6116,11 +6148,14 @@ void SoftBoundCETSPass::assignTagsTopDown(const DataLayout &DL, MTECGNode *N,
         CurInfo->TagAssigned = true;
       }
     }
-
+  out:
     if (CurInfo->TagAssigned)
       ++i;
 
     if (!CurInfo->TagAssigned && Cost > MTE_THRESHOLD) {
+      if (!CurInfo->isGlobalPtr && isa<Instruction>(Root)
+          && BBInLoop[cast<Instruction>(Root)->getParent()])
+        continue;
       ++i;
       Temp.push_back(CurInfo);
     }
@@ -6386,8 +6421,10 @@ bool SoftBoundCETSPass::runOnModule(Module& module) {
                                             "try_swap.net_block_moved", "try_swap.nets_to_update"};
     for (int i = 0; i < sizeof(GPSTORE_GLOBALS) / sizeof(GPSTORE_GLOBALS[0]); i++) {
       GlobalVariable *gv = module.getGlobalVariable(GPSTORE_GLOBALS[i], true);
-      if (gv)
+      if (gv) {
         GPStoreList.insert(gv);
+        GPStoreCand.insert(gv);
+      }
     }
 
     MainFunc = module.getFunction("softboundcets_pseudo_main");
