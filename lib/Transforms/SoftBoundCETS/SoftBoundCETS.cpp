@@ -6564,11 +6564,11 @@ bool SoftBoundCETSPass::runOnModule(Module& module) {
             continue;
           //assert(!Info->ColoringDone);
           //Info->ColoringDone = true;
-          /*
+          
           if(!isa<VectorType>(LI->getType()) && !isa<PointerType>(LI->getType())){
             errs() << "No vector, pointer case" << '\n';
             continue;
-            }*/
+            }
 
 
           Value *tmp_base = getAssociatedBase(LI);
