@@ -898,6 +898,7 @@ void SoftBoundCETSPass::transformMain(Module& module) {
   // set the new function attributes
   new_func->copyAttributesFrom(main_func);
   new_func->setAttributes(AttributeSet::get(main_func->getContext(), param_attrs_vec));
+  new_func->setSubprogram(main_func->getSubprogram());
 
   main_func->getParent()->getFunctionList().insert(main_func->getIterator(), new_func);
   main_func->replaceAllUsesWith(new_func);
