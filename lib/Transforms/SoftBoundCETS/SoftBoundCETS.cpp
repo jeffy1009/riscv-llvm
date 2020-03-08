@@ -6132,6 +6132,10 @@ void SoftBoundCETSPass::assignTagsTopDown(const DataLayout &DL, MTECGNode *N,
         break;
       MTEInfo *RepInfo = (*RCSI).second;
       int TagNum = RepInfo ? RepInfo->TagNum : FirstNotAssigned++;
+      if(AssignedRoots[TagNum]){
+        if(AssignedRoots[TagNum]->Root == RepInfo->Root)
+          continue;
+      }
       assert(!AssignedRoots[TagNum]);
       I->TagNum = TagNum;
       I->TagAssigned = true;
@@ -6230,7 +6234,7 @@ void SoftBoundCETSPass::assignTagsTopDown(const DataLayout &DL, MTECGNode *N,
     MTECGNode *CalleeN = I.second;
     if (!CalleeN->TaggingDone)
       assignTagsTopDown(DL, CalleeN, Stack);
-  }
+  } 
   Stack.pop_back();
 }
 
@@ -6512,6 +6516,12 @@ bool SoftBoundCETSPass::runOnModule(Module& module) {
             continue;
           //assert(!Info->ColoringDone);
           //Info->ColoringDone = true;
+          /*
+          if(!isa<VectorType>(LI->getType()) && !isa<PointerType>(LI->getType())){
+            errs() << "No vector, pointer case" << '\n';
+            continue;
+            }*/
+
 
           Value *tmp_base = getAssociatedBase(LI);
           Value *tmp_bound = getAssociatedBound(LI);
