@@ -378,6 +378,20 @@ Value *SoftBoundCETSPass::findPtrRoot(Value *V, SmallPtrSetImpl<Value *> &Visite
     if (!TV || !FV) {
       if (TV) CandRoots.insert(TV);
       if (FV) CandRoots.insert(FV);
+      for (Value *T : CandRoots) {
+        if (((isa<PHINode>(T) || isa<SelectInst>(T)) && !PtrRootMap.count(T))
+            || isa<GetElementPtrInst>(T)
+            || isa<ConstantPointerNull>(T)
+            || isa<UndefValue>(T))
+          continue;
+
+        if (!Ret) {
+          Ret = T;
+        } else if (T != Ret) {
+          Ret = V;
+          break;
+        }
+      }
     } else if (TV == FV) {
       Ret = TV;
     } else {
