@@ -6092,6 +6092,10 @@ void SoftBoundCETSPass::assignTagsTopDown(const DataLayout &DL, MTECGNode *N,
     Value *Root = CurInfo->Root;
     double Cost = (*I).first;
 
+#if 0
+    if (isa<AllocaInst>(Root))
+      continue;
+#endif
     if (isa<Constant>(Root)) {
       if (!CurInfo->isGlobalPtr) {
         // if (Cost > MTE_THRESHOLD && N->CalleeFreq.empty())
@@ -6180,6 +6184,9 @@ void SoftBoundCETSPass::assignTagsTopDown(const DataLayout &DL, MTECGNode *N,
   if (Stack.size() > 1) {
     auto RCSI = RepCostSorted.begin();
     for (MTEInfo *I : Temp) {
+#if 0 // for top15
+      break;
+#endif
       if ((I->Cost - getColoringOverhead(DL, I)) * N->Freq < (*RCSI).first)
         break;
       MTEInfo *RepInfo = (*RCSI).second;
@@ -6522,6 +6529,7 @@ bool SoftBoundCETSPass::runOnModule(Module& module) {
 
     MTECGNode *CGN = FuncCGNodeMap[func_ptr];
     if (ENABLE_MTE && CGN && CGN->mayNeedRecoloring) {
+    //if (ENABLE_MTE && CGN && CGN->mayNeedRecoloring && func_ptr->getName().find("softboundcets_pseudo_main")==0) {
 #if 1
       for (auto &I : ModuleMTEInfo[CGN]) {
         if (!I.second->NeedColoringCode)
