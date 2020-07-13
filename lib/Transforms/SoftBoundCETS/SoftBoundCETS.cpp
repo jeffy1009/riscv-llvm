@@ -6092,8 +6092,9 @@ void SoftBoundCETSPass::assignTagsTopDown(const DataLayout &DL, MTECGNode *N,
     Value *Root = CurInfo->Root;
     double Cost = (*I).first;
 
-#if 0
-    if (isa<AllocaInst>(Root))
+#if 0 // for top15
+    dbgs() << "top 15\n";
+    if (isa<Argument>(Root))
       continue;
 #endif
     if (isa<Constant>(Root)) {
@@ -6219,6 +6220,7 @@ void SoftBoundCETSPass::assignTagsTopDown(const DataLayout &DL, MTECGNode *N,
       i++;
     }
   }
+  N->mayNeedRecoloring = false;
 
   // Print tagged objects
   i = 0;
@@ -6241,7 +6243,10 @@ void SoftBoundCETSPass::assignTagsTopDown(const DataLayout &DL, MTECGNode *N,
     dbgs() << "    Cost: " << Cost;
     if (CurInfo->TagAssigned) dbgs() << " Tag: " << CurInfo->TagNum;
     if (CurInfo->isGlobalPtr) dbgs() << " [GlobalPtr]";
-    if (CurInfo->TagAssigned && NewlyTagged[CurInfo->TagNum]) dbgs() << " [New] ";
+    if (CurInfo->TagAssigned && NewlyTagged[CurInfo->TagNum]){
+      dbgs() << " [New] ";
+      N->mayNeedRecoloring = true;
+    }
     dbgs() << '\n';
     if (CurInfo->TagAssigned) ++i;
   }
@@ -6527,10 +6532,55 @@ bool SoftBoundCETSPass::runOnModule(Module& module) {
     gatherBaseBoundPass2(func_ptr);
     addDereferenceChecks(func_ptr);
 
+#if 0 // check restore
+      bool mte_restore_tag_flag = false;
+      CallInst * caller_callinst;
+      Function * caller_func_ptr;
+      for (User *caller_inst : func_ptr->users()){
+        errs() << caller_inst->getName() << "\n";
+        caller_callinst = dyn_cast<CallInst>(caller_inst);
+        if(!caller_inst) continue;
+        caller_func_ptr = dyn_cast<Function>(caller_callinst->getParent()->getParent());
+        if(caller_func_ptr){
+          if(caller_func_ptr != func_ptr){
+            for(int i = 1 ; i < 16; i++){
+              if(ModuleMTEInfoAssigned[FuncCGNodeMap[func_ptr]][i] == 0 && ModuleMTEInfoAssigned[FuncCGNodeMap[caller_func_ptr]][i] == 0)
+                continue;
+              if(ModuleMTEInfoAssigned[FuncCGNodeMap[func_ptr]][i] ==  ModuleMTEInfoAssigned[FuncCGNodeMap[caller_func_ptr]][i])
+                continue;
+              mte_restore_tag_flag = true;
+            }
+          }
+        }
+      }
+#endif
+#if 1 // getname
+      bool mte_restore_tag_flag = true;
+#endif
+#if 0 // check call inst
+    bool mte_restore_tag_flag = false;
+    
+      for (auto &BB : func_ptr->getBasicBlockList()){
+        for (auto &I : BB.getInstList()){
+          CallInst * CI = dyn_cast<CallInst>(&I);
+          if(CI){
+            if(!CI->getCalledFunction()){
+              mte_restore_tag_flag = true;
+              break;
+            }
+            if(!strcmp("llvm.dbg.value",CI->getCalledFunction()->getName().data()))
+              continue;
+            if(!strstr("softbound",CI->getCalledFunction()->getName().data()))
+              continue;
+            mte_restore_tag_flag = true;
+          }
+        }
+      }
+      
+#endif
     MTECGNode *CGN = FuncCGNodeMap[func_ptr];
-    if (ENABLE_MTE && CGN && CGN->mayNeedRecoloring) {
-    //if (ENABLE_MTE && CGN && CGN->mayNeedRecoloring && func_ptr->getName().find("softboundcets_pseudo_main")==0) {
-#if 1
+    if (ENABLE_MTE && CGN) {
+#if 1 // coloring ovh
       for (auto &I : ModuleMTEInfo[CGN]) {
         if (!I.second->NeedColoringCode)
           continue;
@@ -6605,6 +6655,7 @@ bool SoftBoundCETSPass::runOnModule(Module& module) {
           setNearestDbgLoc(CallInst::Create(m_mte_color_tag, args, "", InsertPos), InsertPos);
         }
       }
+      if(CGN->mayNeedRecoloring && strcmp("softboundcets_pseudo_main",func_ptr->getName().data())){    
       for (auto &BBI : func_ptr->getBasicBlockList()) {
         BasicBlock *BB = &BBI;
         bool RetBB = false;
@@ -6615,6 +6666,7 @@ bool SoftBoundCETSPass::runOnModule(Module& module) {
         if (RetBB)
           setNearestDbgLoc(CallInst::Create(m_mte_restore_tag, {}, "", BB->getTerminator()),
                            BB->getTerminator(), true);
+      }
       }
 #endif
     }
